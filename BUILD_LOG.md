@@ -302,3 +302,57 @@ Screenshots `shots/toolset-390x844-a-palette-locked.png`, `-b-all-pieces.png`, `
 **Result:** 26 Node tests and 55 browser checks at three viewports pass. Every control listed in specification section 19 now works by touch, and the gold arithmetic is exact at every step.
 
 **Next step:** Phase 5 — the remaining enemy types, bosses, HP scaling and Endless.
+
+
+### Session 1 — 2026-09-03 — Phase 5: escalation, bosses and endless
+
+**Goal:** The full twelve-wave script with every enemy type, HP scaling, bosses, a reachable victory, and Endless afterwards.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 5.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile-emulation tests.
+
+**Work completed:**
+
+- Meshes for the four remaining enemy types: swarmling tetrahedron, brute box with an additive shell (the thing that soaks up the light), Brute King on the brute shape with a gold ring, Umbra octahedron with a violet ring. Bosses always show an HP bar; the others show one once damaged. Each type has its own spin rate.
+- `R.continueEndless()` and the CONTINUE button on the victory screen; the HUD label switches from "WAVE n/12" to "ENDLESS n".
+- A new `builds` test scenario that plays canned strategies from start to finish and reports how far each gets. This is the harness Phase 10 will use for balancing.
+
+**Browser testing:** `node tools/qa.js escalation` at 390x844, 31 checks passing, plus the whole suite re-run (layout 8, beam 23, waves 31, runstates 44, toolset 55, escalation 31).
+
+Measurements recorded:
+
+- HP scaling: mote 30 / 48 / 61 / 80 at waves 1 / 5 / 8 / 12; a wave-12 brute is 318; Brute King stays 400 and Umbra stays 900 regardless of wave.
+- **Direction matters, measured.** One brute in front of three motes on row 3, one second of beam at power 10: beam running *against* the flow puts 10 damage into the brute and only 6.9 into the three motes behind it; the same power running *with* the flow puts 4.2 into the brute and 23.1 into the motes. This is the signature mechanic and it is now proven numerically.
+- Swarms drain: a clean beam reaches the far end of row 3 at 10 power; twelve swarmlings on the row cut it to 1.42; twenty-four put it out before the far end.
+- Endless generator: waves 13 to 18 produce 28 to 37 enemies with rotating compositions, a Brute King at wave 15, speed multiplier 1.02 rising and capped at 1.5.
+- **Victory is reachable by real play:** three mirrors at (7,3), (0,3) and (0,10) with the core at level 6 clears all twelve waves with 4 core HP left, score 1737, in 422 s of simulated time. Continuing into Endless ran waves 13, 14 and 15 with the score rising from 1737 to 2432.
+- Strategy spread from the `builds` harness (unlimited gold, so this measures beam layout alone): concentrated-12 **wins** with 4 HP; two-segment-17 and wide-21 both die on wave 12; a lamp build dies on wave 9; mirrors-only at core 1 dies on wave 5; core-only dies on wave 4. Different strategies reach different waves, and spreading the beam thin is punished, which is the intended trade-off.
+- Simulation cost at peak: 0.001 ms per fixed step. Draw calls 30.
+
+Screenshots `shots/escalation-390x844-a-all-enemies.png` and `-a-enemies-zoom.png` reviewed: all six types are distinguishable at a glance.
+
+**Problems found:**
+
+1. **A regression from Phase 3 that the test suite caught only when the whole suite was re-run:** `__REFRACT.restart()` called `R.newRun()`, which after the title screen landed leaves the phase on `title`. Every test that restarted through the debug API was then poking a board that ignored input, and two older scenarios had silently started failing.
+2. The `beam` scenario still expected Phase 1's temporary tap-to-flip; tapping a piece now selects it.
+3. A "Need N" check failed because a piece was still selected, and the first tap on an empty tile deselects rather than buying.
+4. Brute King and Umbra were barely larger than a plain brute.
+5. The brute shell was bright enough to read as a light blue cube rather than a dark one.
+6. The frame-time assertion at wave 11 (20 ms) fails in headless Chromium, which rasterises in software at deviceScaleFactor 3.
+
+**Fixes:**
+
+1. `__REFRACT.restart()` now calls `R.restartRun()`; a separate `__REFRACT.title()` returns to the title card. **From now on the full scenario suite is run at the end of every phase**, not just the new scenario.
+2. and 3. Scenarios updated to the real interaction (tap to select, then FLIP; deselect before testing an unaffordable purchase).
+4. Boss radii raised: Brute King 0.42 to 0.50, Umbra 0.46 to 0.56. These values are used only for drawing and HP-bar width, so there is no gameplay effect.
+5. Brute shell intensity 0.16 to 0.09 and its body emissive darkened.
+6. The performance check now measures simulation cost directly (0.001 ms per step) and treats the headless frame time as informational with a loose bound. The real frame-rate target is verified on a GPU in Phase 11.
+
+**Decisions locked:** No changes to Part 1. Added: the whole browser scenario suite runs at the end of every phase.
+
+**Balance changes:** Brute King radius 0.42 to 0.50 and Umbra radius 0.46 to 0.56, both cosmetic only, so bosses read as bosses. No numbers that affect play were changed. Noted for Phase 10: the only winning line found so far ends on 4 core HP, below the 6-14 target band, and three of the seven canned builds die on wave 12 — the late waves look slightly too sharp.
+
+**Result:** All six enemy types, both bosses, HP scaling, a real victory and Endless all work. Whole suite: 192 browser checks plus 26 Node tests passing.
+
+**Next step:** Phase 6 — hints, the Help overlay, defeat tips by cause, the early-call display, the beam sweep and the drag preview.

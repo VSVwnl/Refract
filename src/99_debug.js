@@ -50,8 +50,13 @@
       },
 
       restart: function (seed) {
-        R.newRun(seed);
+        R.restartRun(seed);
         return R.state.rngSeed;
+      },
+
+      title: function () {
+        R.titleRun();
+        return R.state.phase;
       },
 
       /* Speed 0 stops the frame loop from stepping, so step() owns the clock. */

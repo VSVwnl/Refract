@@ -153,8 +153,9 @@
   ui.update = function (s) {
     setText(el.hpVal, String(Math.max(0, s.coreHp)));
     setText(el.goldVal, String(Math.floor(s.gold)));
-    setText(el.waveVal, s.endless ? String(s.wave) : String(s.wave));
-    setText(el.waveSub, s.endless ? ' ENDLESS' : '/12');
+    setText(el.waveLbl, s.endless ? 'ENDLESS' : 'WAVE');
+    setText(el.waveVal, String(s.wave));
+    setText(el.waveSub, s.endless ? '' : '/12');
     setText(el.litVal, String(s.beam.litRoadCount));
     setText(el.litSub, '/' + s.roadCells);
 
@@ -210,6 +211,9 @@
           break;
         case 'wavestart':
           ui.notice('WAVE ' + e.wave, 1.4);
+          break;
+        case 'endless':
+          ui.notice('ENDLESS MODE', 2.4);
           break;
         case 'unlock':
           ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
@@ -607,6 +611,7 @@
     el.statLit = byId('statLit');
     el.hpVal = key(el.statHp.querySelector('.val'), 'hpVal');
     el.goldVal = key(el.statGold.querySelector('.val'), 'goldVal');
+    el.waveLbl = key(el.statWave.querySelector('.lbl'), 'waveLbl');
     el.waveVal = key(el.statWave.querySelector('.val'), 'waveVal');
     el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
     el.litVal = key(el.statLit.querySelector('.val'), 'litVal');

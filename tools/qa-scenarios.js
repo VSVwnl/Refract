@@ -47,6 +47,7 @@ module.exports = function (S) {
 
   /* Phase 1: bending the beam with mirrors. */
   S.beam = async function (ctx) {
+    await ctx.ev(function () { window.__REFRACT.restart(10); });
     const lit = function () { return ctx.ev(function () { return R.state.beam.litRoadCount; }); };
     const gold = function () { return ctx.ev(function () { return R.state.gold; }); };
     const hud = function () {
@@ -67,6 +68,9 @@ module.exports = function (S) {
     await ctx.snap('b-mirror73');
 
     await ctx.tapCell(7, 3);
+    ctx.check(await ctx.ev(function () { return R.state.ui.selectedPieceId !== null; }),
+      'tapping a placed piece selects it');
+    await ctx.tap('#actionBar button:nth-child(1)');
     ctx.eq(await lit(), 1, 'flipping sends the beam off the board');
     ctx.eq(await gold(), 20, 'flipping is free');
     await ctx.snap('c-flipped');
@@ -103,7 +107,7 @@ module.exports = function (S) {
     await ctx.page.waitForTimeout(80);
     ctx.eq(await ctx.ev(function () { return R.state.pieces.size; }), before + 1, 'rapid taps buy one piece');
 
-    await ctx.ev(function () { window.__REFRACT.setGold(15); });
+    await ctx.ev(function () { window.__REFRACT.setGold(15); R.pieces.deselect(R.state); });
     const n = await ctx.ev(function () { return R.state.pieces.size; });
     await ctx.tapCell(3, 8);
     ctx.eq(await ctx.ev(function () { return R.state.pieces.size; }), n, 'no purchase without gold');
@@ -333,7 +337,7 @@ module.exports = function (S) {
     const vic = await overlay();
     ctx.check(vic.indexOf('THE LIGHT HELD') >= 0, 'victory overlay');
     ctx.check(vic.indexOf('PLAY AGAIN') >= 0, 'victory has PLAY AGAIN');
-    ctx.check(vic.indexOf('CONTINUE') < 0, 'endless is not offered yet');
+    ctx.check(vic.indexOf('CONTINUE') >= 0, 'victory offers CONTINUE into endless');
     ctx.check(await ctx.ev(function () { return R.meta.best > 0; }), 'best score was stored');
     await ctx.snap('c-victory');
 
@@ -709,6 +713,339 @@ module.exports = function (S) {
     const info = await st(function () { return R.render.info(); });
     ctx.check(info.calls <= 150, 'draw calls in budget: ' + info.calls);
     ctx.check(await st(function () { return R.state.beam.segCount <= R.BALANCE.MAX_SEGMENTS; }), 'segment cap holds');
+  };
+
+  /* Phase 5: all six enemy types, bosses, scaling, victory and endless. */
+  S.escalation = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const snap = function () { return ctx.snapshot(); };
+
+    /* --- HP scaling and boss HP --- */
+    const hp = await st(function () {
+      window.__REFRACT.restart(1200);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      const out = {};
+      [1, 5, 8, 12].forEach(function (w) {
+        s.wave = w;
+        const e = R.enemies.spawn(s, 'mote');
+        out['mote' + w] = e.maxHp;
+      });
+      s.wave = 10;
+      out.king = R.enemies.spawn(s, 'bruteking').maxHp;
+      s.wave = 12;
+      out.umbra = R.enemies.spawn(s, 'umbra').maxHp;
+      out.brute12 = R.enemies.spawn(s, 'brute').maxHp;
+      return out;
+    });
+    ctx.log('  hp scaling: ' + JSON.stringify(hp));
+    ctx.eq(hp.mote1, 30, 'mote hp at wave 1');
+    ctx.eq(hp.mote5, 48, 'mote hp at wave 5 is 30 x 1.6');
+    ctx.eq(hp.mote8, 61, 'mote hp at wave 8 is 30 x 2.05, rounded');
+    ctx.eq(hp.mote12, 80, 'mote hp at wave 12 is 30 x 2.65, rounded');
+    ctx.eq(hp.king, 400, 'the Brute King ignores the wave multiplier');
+    ctx.eq(hp.umbra, 900, 'Umbra ignores the wave multiplier');
+    ctx.eq(hp.brute12, 318, 'a wave 12 brute is scaled');
+
+    /* --- every type renders with its own shape --- */
+    await st(function () {
+      window.__REFRACT.restart(1201);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.countdown = 9999;
+      const types = ['mote', 'runner', 'swarmling', 'brute', 'bruteking', 'umbra'];
+      types.forEach(function (t, i) {
+        const e = R.enemies.spawn(s, t);
+        e.t = 3 + i * 0.9;
+        e.hp = e.maxHp * (0.35 + i * 0.1);
+        R.enemies.positionOf(s, e);
+      });
+      window.__REFRACT.step(0.05);
+    });
+    await ctx.page.waitForTimeout(120);
+    await ctx.snap('a-all-enemies');
+    await ctx.page.screenshot({
+      path: 'shots/' + ctx.prefix + '-a-enemies-zoom.png',
+      clip: { x: 0, y: 220, width: ctx.width, height: 260 }
+    });
+    ctx.eq(await st(function () { return R.state.enemies.length; }), 6, 'six enemy types on the board');
+
+    /* --- direction relative to enemy flow --- */
+    const dirTest = function (build) {
+      return st(function (b) {
+        window.__REFRACT.restart(1300);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.countdown = 9999;
+        s.gold = 5000;
+        s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+        b.forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+        /* One brute in front, three motes behind it, all on row 3. */
+        const brute = R.enemies.spawn(s, 'brute');
+        brute.t = 8;
+        R.enemies.positionOf(s, brute);
+        const motes = [7, 6, 5].map(function (t) {
+          const e = R.enemies.spawn(s, 'mote');
+          e.t = t;
+          e.speed = 0;
+          R.enemies.positionOf(s, e);
+          return e;
+        });
+        brute.speed = 0;
+        window.__REFRACT.step(1);
+        return {
+          brute: Math.round((brute.maxHp - brute.hp) * 10) / 10,
+          motes: Math.round(motes.reduce(function (a, e) { return a + (e.maxHp - e.hp); }, 0) * 10) / 10
+        };
+      }, build);
+    };
+
+    const against = await dirTest([['mirror', 7, 3, 1]]);
+    const withFlow = await dirTest([['mirror', 7, 0, 1], ['mirror', 0, 0, 0], ['mirror', 0, 3, 1]]);
+    ctx.log('  against the flow: ' + JSON.stringify(against) + '   with the flow: ' + JSON.stringify(withFlow));
+    ctx.check(against.brute > withFlow.brute * 2, 'against the flow the brute takes the beam');
+    ctx.check(withFlow.motes > against.motes * 2, 'with the flow the motes behind it burn instead');
+    ctx.near(against.brute, 10, 0.3, 'the front brute takes full power');
+    ctx.near(against.motes, 7.1, 0.5, 'the shielded motes take very little');
+
+    /* --- swarms drain the beam --- */
+    const drain = await st(function () {
+      window.__REFRACT.restart(1400);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.countdown = 9999;
+      s.gold = 5000;
+      window.__REFRACT.place('mirror', 7, 3, 1);
+      const clean = s.beam.lit[R.grid.idx(1, 3)];
+      for (let i = 0; i < 12; i++) {
+        const e = R.enemies.spawn(s, 'swarmling');
+        e.t = 4 + i * 0.12;
+        e.speed = 0;
+        R.enemies.positionOf(s, e);
+      }
+      window.__REFRACT.step(1 / 60);
+      const drained = s.beam.lit[R.grid.idx(1, 3)];
+      for (let i = 0; i < 12; i++) {
+        const e = R.enemies.spawn(s, 'swarmling');
+        e.t = 5 + i * 0.12;
+        e.speed = 0;
+        R.enemies.positionOf(s, e);
+      }
+      window.__REFRACT.step(1 / 60);
+      return {
+        clean: Math.round(clean * 100) / 100,
+        drained: Math.round(drained * 100) / 100,
+        dead: Math.round(s.beam.lit[R.grid.idx(1, 3)] * 100) / 100
+      };
+    });
+    ctx.log('  swarm drain: ' + JSON.stringify(drain));
+    ctx.eq(drain.clean, 10, 'clean beam reaches the far end at full power');
+    ctx.check(drain.drained < 2, 'twelve swarmlings drain the beam to under 2 power');
+    ctx.eq(drain.dead, 0, 'twenty-four swarmlings put the beam out before the far end');
+
+    /* --- endless generator --- */
+    const endless = await st(function () {
+      const out = [];
+      for (let w = 13; w <= 18; w++) {
+        const q = R.enemies.buildQueue(w);
+        const counts = {};
+        q.forEach(function (x) { counts[x.type] = (counts[x.type] || 0) + 1; });
+        out.push({ w: w, n: q.length, counts: counts, speed: Math.round(R.enemies.speedMult(w) * 100) / 100 });
+      }
+      return out;
+    });
+    ctx.log('  endless waves: ' + JSON.stringify(endless));
+    ctx.check(endless.every(function (x) { return x.n > 0; }), 'every endless wave has enemies');
+    ctx.eq(endless[2].counts.bruteking, 1, 'a Brute King every fifth wave (wave 15)');
+    ctx.eq(endless[0].speed, 1.02, 'endless speed multiplier starts at 1.02');
+    ctx.eq(await st(function () { return R.enemies.speedMult(200); }), 1.5, 'the speed multiplier is capped at 1.5');
+
+    /* --- a real victory over all twelve waves --- */
+    const build = [
+      ['mirror', 7, 3, 1],
+      ['mirror', 0, 3, 0],
+      ['mirror', 0, 10, 1]
+    ];
+    const run = await st(function (b) {
+      window.__REFRACT.restart(1500);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.gold = 5000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      b.forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+      for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+      const lit = s.beam.litRoadCount;
+      const log = [];
+      for (let w = 1; w <= 12; w++) {
+        window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+        window.__REFRACT.stepUntil('s.phase !== "wave"', 220);
+        log.push({ w: w, hp: s.coreHp, gold: s.gold, t: Math.round(s.time) });
+        if (s.phase === 'lost' || s.phase === 'won') break;
+      }
+      return { lit: lit, phase: s.phase, hp: s.coreHp, score: R.computeScore(s), time: Math.round(s.time), log: log };
+    }, build);
+    ctx.log('  victory run: lit ' + run.lit + '  phase ' + run.phase + '  hp ' + run.hp + '  score ' + run.score + '  sim time ' + run.time + 's');
+    ctx.log('  per wave: ' + JSON.stringify(run.log));
+    ctx.eq(run.lit, 12, 'the concentrated build lights 12 of 25 road cells at full power');
+    ctx.eq(run.phase, 'won', 'twelve waves cleared');
+    await ctx.snap('b-victory');
+
+    const vic = await st(function () {
+      const o = document.querySelector('#overlayRoot .overlay');
+      return o ? o.textContent.replace(/\s+/g, ' ').trim() : null;
+    });
+    ctx.check(vic.indexOf('CONTINUE') >= 0, 'endless is offered after a win');
+
+    /* --- continue into endless --- */
+    await ctx.tap('#overlayRoot .bigbtn.ghost');
+    let m = await snap();
+    ctx.eq(m.endless, true, 'endless mode is on');
+    ctx.eq(m.phase, 'building', 'back to building');
+    ctx.eq(await st(function () { return document.getElementById('statWave').textContent.replace(/\s+/g, ''); }),
+      'ENDLESS12', 'the HUD says ENDLESS');
+
+    const endlessRun = await st(function () {
+      const s = R.state;
+      const log = [];
+      for (let i = 0; i < 3; i++) {
+        const w = s.wave + 1;
+        window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+        window.__REFRACT.stepUntil('s.phase !== "wave"', 260);
+        log.push({ w: s.wave, hp: s.coreHp, foes: s.waveEnemiesTotal });
+        if (s.phase === 'lost') break;
+      }
+      return { log: log, wave: s.wave, phase: s.phase, score: R.computeScore(s) };
+    });
+    ctx.log('  endless run: ' + JSON.stringify(endlessRun));
+    ctx.check(endlessRun.wave >= 15, 'three more endless waves ran (reached wave ' + endlessRun.wave + ')');
+    ctx.check(endlessRun.score > run.score, 'score keeps rising in endless');
+    await ctx.snap('c-endless');
+
+    /* --- frame rate at wave 11 --- */
+    await st(function (b) {
+      R.restartRun(1600);
+      const s = R.state;
+      s.gold = 5000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      b.forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+      for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+      s.wave = 10;
+      R.startWave(s);
+      window.__REFRACT.step(0.1);
+    }, build);
+    const simCost = await st(function () {
+      const s = R.state;
+      const t0 = performance.now();
+      for (let i = 0; i < 600; i++) R.simStep(s, 1 / 60);
+      return {
+        msPerStep: Math.round((performance.now() - t0) / 600 * 1000) / 1000,
+        foes: s.enemies.length
+      };
+    });
+    ctx.log('  simulation cost at peak: ' + JSON.stringify(simCost));
+    ctx.check(simCost.msPerStep < 2, 'a simulation step costs under 2 ms (' + simCost.msPerStep + ')');
+
+    const perf = await st(function () {
+      return new Promise(function (resolve) {
+        const frames = [];
+        let last = performance.now();
+        function tick(now) {
+          frames.push(now - last);
+          last = now;
+          if (frames.length < 90) requestAnimationFrame(tick);
+          else {
+            frames.sort(function (a, b) { return a - b; });
+            resolve({
+              median: Math.round(frames[45] * 100) / 100,
+              worst: Math.round(frames[frames.length - 1] * 100) / 100,
+              foes: R.state.enemies.length,
+              wave: R.state.wave,
+              calls: R.render.info().calls,
+              seg: R.state.beam.segCount
+            });
+          }
+        }
+        requestAnimationFrame(tick);
+      });
+    });
+    ctx.log('  wave ' + perf.wave + ' performance: ' + JSON.stringify(perf));
+    /* Headless Chromium rasterises in software at deviceScaleFactor 3, so this
+       bound is loose; the real target is checked on the desktop GPU run. */
+    ctx.check(perf.median <= 45, 'headless frame time at peak stays workable (' + perf.median + ' ms)');
+    ctx.check(perf.calls <= 150, 'draw calls in budget: ' + perf.calls);
+    ctx.check(perf.seg <= 128, 'segment count in budget: ' + perf.seg);
+    await ctx.snap('d-wave11');
+  };
+
+  /*
+   * A harness that plays canned builds straight through and reports how far
+   * they get. Used to find winning lines and, in the balancing phase, to check
+   * that no single strategy dominates.
+   */
+  S.builds = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    const BUILDS = {
+      'concentrated 12': {
+        core: 6,
+        pieces: [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1]]
+      },
+      'concentrated + reflector': {
+        core: 6,
+        pieces: [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1], ['reflector', 7, 9, 0]]
+      },
+      'two segments (split at row 6)': {
+        core: 6,
+        pieces: [['splitter', 7, 6, 1], ['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1]]
+      },
+      'wide 21': {
+        core: 6,
+        pieces: [['splitter', 7, 6, 1], ['splitter', 7, 5, 1], ['mirror', 7, 3, 1],
+          ['mirror', 2, 5, 0], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1]]
+      },
+      'row 3 + row 10 + lamp on row 6': {
+        core: 6,
+        pieces: [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1], ['lamp', 7, 6, 3]]
+      },
+      'mirrors only, core 1': {
+        core: 1,
+        pieces: [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1],
+          ['mirror', 7, 6, 1], ['mirror', 1, 6, 0], ['mirror', 1, 4, 1]]
+      },
+      'core only': { core: 6, pieces: [] }
+    };
+
+    const results = [];
+    for (const name of Object.keys(BUILDS)) {
+      const out = await st(function (b) {
+        window.__REFRACT.restart(2000);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.gold = 100000;
+        s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+        b.pieces.forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+        for (let i = 1; i < b.core; i++) R.pieces.upgradeCore(s);
+        const lit = s.beam.litRoadCount;
+        const hpLog = [];
+        for (let w = 1; w <= 12; w++) {
+          window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+          window.__REFRACT.stepUntil('s.phase !== "wave"', 260);
+          hpLog.push(s.coreHp);
+          if (s.phase === 'lost' || s.phase === 'won') break;
+        }
+        return { lit: lit, phase: s.phase, wave: s.wave, hp: s.coreHp, hpLog: hpLog };
+      }, BUILDS[name]);
+      results.push({ name: name, r: out });
+      ctx.log('  ' + name.padEnd(30) + ' lit ' + String(out.lit).padStart(2) +
+        '  ' + out.phase.padEnd(8) + ' wave ' + String(out.wave).padStart(2) +
+        '  hp ' + String(out.hp).padStart(2) + '  ' + JSON.stringify(out.hpLog));
+    }
+
+    const winners = results.filter(function (x) { return x.r.phase === 'won'; });
+    ctx.check(winners.length > 0, 'at least one build clears all twelve waves');
+    const spread = results.map(function (x) { return x.r.wave; });
+    ctx.check(Math.max.apply(null, spread) - Math.min.apply(null, spread) >= 2,
+      'different strategies reach different waves: ' + JSON.stringify(spread));
   };
 
 };

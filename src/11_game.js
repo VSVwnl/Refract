@@ -110,6 +110,17 @@
     return s;
   };
 
+  /* Keep playing after a win: generated waves until the core falls. */
+  R.continueEndless = function () {
+    var s = R.state;
+    if (s.phase !== 'won') return;
+    s.endless = true;
+    s.phase = 'building';
+    s.countdown = R.BALANCE.COUNTDOWN;
+    R.applyUnlocks(s, s.wave + 1);
+    R.emit(s, 'endless', { wave: s.wave + 1 });
+  };
+
   R.endRun = function (s, won) {
     s.score = R.computeScore(s);
     s.phase = won ? 'won' : 'lost';

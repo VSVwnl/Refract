@@ -51,8 +51,8 @@
       runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, gold: 5,   leak: 1,  radius: 0.22 },
       swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, gold: 1,   leak: 1,  radius: 0.14 },
       brute:     { hp: 120, speed: 0.55, absorb: 0.70, gold: 16,  leak: 3,  radius: 0.36 },
-      bruteking: { hp: 400, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.42, boss: true },
-      umbra:     { hp: 900, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.46, boss: true }
+      bruteking: { hp: 400, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
+      umbra:     { hp: 900, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
     /* Each group is [type, count, gapSeconds]; groups run in order with GROUP_GAP between them. */
     WAVES: [

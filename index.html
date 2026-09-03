@@ -780,8 +780,8 @@ body.wide #sideNote { display: block; }
       runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, gold: 5,   leak: 1,  radius: 0.22 },
       swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, gold: 1,   leak: 1,  radius: 0.14 },
       brute:     { hp: 120, speed: 0.55, absorb: 0.70, gold: 16,  leak: 3,  radius: 0.36 },
-      bruteking: { hp: 400, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.42, boss: true },
-      umbra:     { hp: 900, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.46, boss: true }
+      bruteking: { hp: 400, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
+      umbra:     { hp: 900, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
     /* Each group is [type, count, gapSeconds]; groups run in order with GROUP_GAP between them. */
     WAVES: [
@@ -2770,21 +2770,36 @@ body.wide #sideNote { display: block; }
     travelVec = new THREE.Vector3(0, 0, 1);
     billboardX = V.TILT_DEG * Math.PI / 180 - Math.PI / 2;
 
-    var mote = new THREE.SphereGeometry(1, 10, 8);
-    var runner = new THREE.ConeGeometry(0.85, 2.1, 6);
+    function body(geo, color, emissive, count) {
+      return makeInstanced(geo, new THREE.MeshLambertMaterial({
+        color: color, emissive: emissive, emissiveIntensity: 0.6
+      }), count || MAX_ENEMIES);
+    }
 
-    dyn.enemyMote = makeInstanced(mote, new THREE.MeshLambertMaterial({
-      color: C.enemy.mote, emissive: 0x3a0d5c, emissiveIntensity: 0.55
-    }), MAX_ENEMIES);
-    dyn.enemyRunner = makeInstanced(runner, new THREE.MeshLambertMaterial({
-      color: C.enemy.runner, emissive: 0x0c4a48, emissiveIntensity: 0.6
-    }), MAX_ENEMIES);
+    dyn.enemyMote = body(new THREE.SphereGeometry(1, 10, 8), C.enemy.mote, 0x3a0d5c);
+    dyn.enemyRunner = body(new THREE.ConeGeometry(0.85, 2.1, 6), C.enemy.runner, 0x0c4a48);
+    dyn.enemySwarm = body(new THREE.TetrahedronGeometry(1.35), C.enemy.swarmling, 0x4a0e33);
+    dyn.enemyBrute = body(new THREE.BoxGeometry(1.5, 1.45, 1.5), C.enemy.brute, 0x1d1838);
+    dyn.enemyUmbra = body(new THREE.OctahedronGeometry(1.25, 0), C.enemy.umbra, 0x3d0f6b, 8);
 
     ENEMY_SHAPE.mote = 'enemyMote';
     ENEMY_SHAPE.runner = 'enemyRunner';
+    ENEMY_SHAPE.swarmling = 'enemySwarm';
+    ENEMY_SHAPE.brute = 'enemyBrute';
+    ENEMY_SHAPE.bruteking = 'enemyBrute';
+    ENEMY_SHAPE.umbra = 'enemyUmbra';
+
+    /* Brutes wear a visible shell; it is what soaks up the light. */
+    dyn.enemyShell = makeInstanced(
+      new THREE.BoxGeometry(1.8, 1.72, 1.8),
+      additiveMaterial(null, 0x9a86ff),
+      MAX_ENEMIES,
+      3
+    );
 
     var quad = new THREE.PlaneGeometry(1, 1);
     dyn.enemyGlint = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), MAX_ENEMIES, 3);
+    dyn.bossRing = makeInstanced(quad, additiveMaterial(rd.tex.ring, 0xffffff), 8, 4);
     /* White base materials so the per-instance colour is the only tint. */
     dyn.barBack = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 5);
     dyn.barFill = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 6);
@@ -2807,13 +2822,17 @@ body.wide #sideNote { display: block; }
     return ENEMY_SHAPE[type] || 'enemyMote';
   }
 
+  var SPIN = { mote: 0.8, runner: 0, swarmling: 2.4, brute: 0.25, bruteking: 0.3, umbra: 0.5 };
+
   function drawEnemies(state) {
     var fills = {};
     var k;
     for (k in ENEMY_SHAPE) {
       if (!fills[ENEMY_SHAPE[k]]) fills[ENEMY_SHAPE[k]] = new Filler(dyn[ENEMY_SHAPE[k]]);
     }
+    var shell = new Filler(dyn.enemyShell);
     var glint = new Filler(dyn.enemyGlint);
+    var ring = new Filler(dyn.bossRing);
     var back = new Filler(dyn.barBack);
     var fill = new Filler(dyn.barFill);
     var o = dyn.enemyObj;
@@ -2828,8 +2847,7 @@ body.wide #sideNote { display: block; }
       var y = rad + 0.06;
       var hit = state.time - e.hitAt;
       var flash = hit >= 0 && hit < 0.09 ? 1 : 0;
-      var body = C.enemy[e.type] || C.enemy.mote;
-      var tint = flash ? R.util.mixColor(0xffffff, 0xffffff, 1) : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
+      var tint = flash ? 0xffffff : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
 
       o.position.set(e.x, y, e.z);
       o.scale.set(rad, rad, rad);
@@ -2840,15 +2858,24 @@ body.wide #sideNote { display: block; }
         o.quaternion.setFromUnitVectors(UP_VEC, travelVec);
       } else {
         o.quaternion.set(0, 0, 0, 1);
-        o.rotation.y = state.time * 0.8 + e.id;
+        o.rotation.y = state.time * (SPIN[e.type] || 0) + e.id;
       }
       fills[shapeKey(e.type)].pushObject(o, tint);
+
+      if (e.type === 'brute' || e.type === 'bruteking') {
+        shell.pushObject(o, R.util.mixColor(0x000000, flash ? 0xffffff : 0x8a72ff, 0.09 + 0.07 * fade));
+      }
+
+      if (e.boss) {
+        ring.pushBillboard(e.x, y, e.z, rad * 4.4, rad * 4.4,
+          R.util.mixColor(0x000000, e.type === 'umbra' ? 0xb14dff : 0xffc247, 0.55));
+      }
 
       var glintCol = C.enemyGlint[e.type] || C.enemyGlint.mote;
       glint.pushBillboard(e.x, y, e.z, rad * 2.3, rad * 2.3,
         R.util.mixColor(0x000000, flash ? 0xffffff : glintCol, (flash ? 0.85 : 0.4) * fade));
 
-      if (e.hp < e.maxHp && e.t >= 0) {
+      if ((e.hp < e.maxHp || e.boss) && e.t >= 0) {
         var w = Math.max(0.5, rad * 2.1);
         var by = y + rad + 0.22;
         var frac = R.util.clamp(e.hp / e.maxHp, 0, 1);
@@ -2859,11 +2886,12 @@ body.wide #sideNote { display: block; }
     }
 
     for (k in fills) fills[k].finish();
+    shell.finish();
     glint.finish();
+    ring.finish();
     back.finish();
     fill.finish();
   }
-
 
   /* ---------- selection and drag highlights ---------- */
 
@@ -3128,8 +3156,9 @@ body.wide #sideNote { display: block; }
   ui.update = function (s) {
     setText(el.hpVal, String(Math.max(0, s.coreHp)));
     setText(el.goldVal, String(Math.floor(s.gold)));
-    setText(el.waveVal, s.endless ? String(s.wave) : String(s.wave));
-    setText(el.waveSub, s.endless ? ' ENDLESS' : '/12');
+    setText(el.waveLbl, s.endless ? 'ENDLESS' : 'WAVE');
+    setText(el.waveVal, String(s.wave));
+    setText(el.waveSub, s.endless ? '' : '/12');
     setText(el.litVal, String(s.beam.litRoadCount));
     setText(el.litSub, '/' + s.roadCells);
 
@@ -3185,6 +3214,9 @@ body.wide #sideNote { display: block; }
           break;
         case 'wavestart':
           ui.notice('WAVE ' + e.wave, 1.4);
+          break;
+        case 'endless':
+          ui.notice('ENDLESS MODE', 2.4);
           break;
         case 'unlock':
           ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
@@ -3582,6 +3614,7 @@ body.wide #sideNote { display: block; }
     el.statLit = byId('statLit');
     el.hpVal = key(el.statHp.querySelector('.val'), 'hpVal');
     el.goldVal = key(el.statGold.querySelector('.val'), 'goldVal');
+    el.waveLbl = key(el.statWave.querySelector('.lbl'), 'waveLbl');
     el.waveVal = key(el.statWave.querySelector('.val'), 'waveVal');
     el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
     el.litVal = key(el.statLit.querySelector('.val'), 'litVal');
@@ -3994,6 +4027,17 @@ body.wide #sideNote { display: block; }
     return s;
   };
 
+  /* Keep playing after a win: generated waves until the core falls. */
+  R.continueEndless = function () {
+    var s = R.state;
+    if (s.phase !== 'won') return;
+    s.endless = true;
+    s.phase = 'building';
+    s.countdown = R.BALANCE.COUNTDOWN;
+    R.applyUnlocks(s, s.wave + 1);
+    R.emit(s, 'endless', { wave: s.wave + 1 });
+  };
+
   R.endRun = function (s, won) {
     s.score = R.computeScore(s);
     s.phase = won ? 'won' : 'lost';
@@ -4252,8 +4296,13 @@ body.wide #sideNote { display: block; }
       },
 
       restart: function (seed) {
-        R.newRun(seed);
+        R.restartRun(seed);
         return R.state.rngSeed;
+      },
+
+      title: function () {
+        R.titleRun();
+        return R.state.phase;
       },
 
       /* Speed 0 stops the frame loop from stepping, so step() owns the clock. */

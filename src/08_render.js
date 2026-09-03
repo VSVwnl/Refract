@@ -702,21 +702,36 @@
     travelVec = new THREE.Vector3(0, 0, 1);
     billboardX = V.TILT_DEG * Math.PI / 180 - Math.PI / 2;
 
-    var mote = new THREE.SphereGeometry(1, 10, 8);
-    var runner = new THREE.ConeGeometry(0.85, 2.1, 6);
+    function body(geo, color, emissive, count) {
+      return makeInstanced(geo, new THREE.MeshLambertMaterial({
+        color: color, emissive: emissive, emissiveIntensity: 0.6
+      }), count || MAX_ENEMIES);
+    }
 
-    dyn.enemyMote = makeInstanced(mote, new THREE.MeshLambertMaterial({
-      color: C.enemy.mote, emissive: 0x3a0d5c, emissiveIntensity: 0.55
-    }), MAX_ENEMIES);
-    dyn.enemyRunner = makeInstanced(runner, new THREE.MeshLambertMaterial({
-      color: C.enemy.runner, emissive: 0x0c4a48, emissiveIntensity: 0.6
-    }), MAX_ENEMIES);
+    dyn.enemyMote = body(new THREE.SphereGeometry(1, 10, 8), C.enemy.mote, 0x3a0d5c);
+    dyn.enemyRunner = body(new THREE.ConeGeometry(0.85, 2.1, 6), C.enemy.runner, 0x0c4a48);
+    dyn.enemySwarm = body(new THREE.TetrahedronGeometry(1.35), C.enemy.swarmling, 0x4a0e33);
+    dyn.enemyBrute = body(new THREE.BoxGeometry(1.5, 1.45, 1.5), C.enemy.brute, 0x1d1838);
+    dyn.enemyUmbra = body(new THREE.OctahedronGeometry(1.25, 0), C.enemy.umbra, 0x3d0f6b, 8);
 
     ENEMY_SHAPE.mote = 'enemyMote';
     ENEMY_SHAPE.runner = 'enemyRunner';
+    ENEMY_SHAPE.swarmling = 'enemySwarm';
+    ENEMY_SHAPE.brute = 'enemyBrute';
+    ENEMY_SHAPE.bruteking = 'enemyBrute';
+    ENEMY_SHAPE.umbra = 'enemyUmbra';
+
+    /* Brutes wear a visible shell; it is what soaks up the light. */
+    dyn.enemyShell = makeInstanced(
+      new THREE.BoxGeometry(1.8, 1.72, 1.8),
+      additiveMaterial(null, 0x9a86ff),
+      MAX_ENEMIES,
+      3
+    );
 
     var quad = new THREE.PlaneGeometry(1, 1);
     dyn.enemyGlint = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), MAX_ENEMIES, 3);
+    dyn.bossRing = makeInstanced(quad, additiveMaterial(rd.tex.ring, 0xffffff), 8, 4);
     /* White base materials so the per-instance colour is the only tint. */
     dyn.barBack = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 5);
     dyn.barFill = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 6);
@@ -739,13 +754,17 @@
     return ENEMY_SHAPE[type] || 'enemyMote';
   }
 
+  var SPIN = { mote: 0.8, runner: 0, swarmling: 2.4, brute: 0.25, bruteking: 0.3, umbra: 0.5 };
+
   function drawEnemies(state) {
     var fills = {};
     var k;
     for (k in ENEMY_SHAPE) {
       if (!fills[ENEMY_SHAPE[k]]) fills[ENEMY_SHAPE[k]] = new Filler(dyn[ENEMY_SHAPE[k]]);
     }
+    var shell = new Filler(dyn.enemyShell);
     var glint = new Filler(dyn.enemyGlint);
+    var ring = new Filler(dyn.bossRing);
     var back = new Filler(dyn.barBack);
     var fill = new Filler(dyn.barFill);
     var o = dyn.enemyObj;
@@ -760,8 +779,7 @@
       var y = rad + 0.06;
       var hit = state.time - e.hitAt;
       var flash = hit >= 0 && hit < 0.09 ? 1 : 0;
-      var body = C.enemy[e.type] || C.enemy.mote;
-      var tint = flash ? R.util.mixColor(0xffffff, 0xffffff, 1) : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
+      var tint = flash ? 0xffffff : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
 
       o.position.set(e.x, y, e.z);
       o.scale.set(rad, rad, rad);
@@ -772,15 +790,24 @@
         o.quaternion.setFromUnitVectors(UP_VEC, travelVec);
       } else {
         o.quaternion.set(0, 0, 0, 1);
-        o.rotation.y = state.time * 0.8 + e.id;
+        o.rotation.y = state.time * (SPIN[e.type] || 0) + e.id;
       }
       fills[shapeKey(e.type)].pushObject(o, tint);
+
+      if (e.type === 'brute' || e.type === 'bruteking') {
+        shell.pushObject(o, R.util.mixColor(0x000000, flash ? 0xffffff : 0x8a72ff, 0.09 + 0.07 * fade));
+      }
+
+      if (e.boss) {
+        ring.pushBillboard(e.x, y, e.z, rad * 4.4, rad * 4.4,
+          R.util.mixColor(0x000000, e.type === 'umbra' ? 0xb14dff : 0xffc247, 0.55));
+      }
 
       var glintCol = C.enemyGlint[e.type] || C.enemyGlint.mote;
       glint.pushBillboard(e.x, y, e.z, rad * 2.3, rad * 2.3,
         R.util.mixColor(0x000000, flash ? 0xffffff : glintCol, (flash ? 0.85 : 0.4) * fade));
 
-      if (e.hp < e.maxHp && e.t >= 0) {
+      if ((e.hp < e.maxHp || e.boss) && e.t >= 0) {
         var w = Math.max(0.5, rad * 2.1);
         var by = y + rad + 0.22;
         var frac = R.util.clamp(e.hp / e.maxHp, 0, 1);
@@ -791,11 +818,12 @@
     }
 
     for (k in fills) fills[k].finish();
+    shell.finish();
     glint.finish();
+    ring.finish();
     back.finish();
     fill.finish();
   }
-
 
   /* ---------- selection and drag highlights ---------- */
 
