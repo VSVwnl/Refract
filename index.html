@@ -1090,7 +1090,7 @@ body.wide #sideNote { display: block; }
       path: board.path,
       pieces: new Map(),
       nextPieceId: 1,
-      lampsBought: 0,
+      lampsPlaced: 0,
       enemies: [],
       nextEnemyId: 1,
       spawnQueue: [],
@@ -1104,6 +1104,7 @@ body.wide #sideNote { display: block; }
       ui: {
         selectedType: 'mirror',
         selectedPieceId: null,
+        moveMode: false,
         drag: null,
         hintsShown: {},
         undo: null,
@@ -1847,7 +1848,7 @@ body.wide #sideNote { display: block; }
   R.pieces = {};
 
   R.pieces.cost = function (s, type) {
-    if (type === 'lamp') return B.PIECE_COST.lamp + B.LAMP_COST_STEP * s.lampsBought;
+    if (type === 'lamp') return B.PIECE_COST.lamp + B.LAMP_COST_STEP * s.lampsPlaced;
     return B.PIECE_COST[type] || 0;
   };
 
@@ -1914,7 +1915,7 @@ body.wide #sideNote { display: block; }
 
     s.gold -= cost;
     s.pieces.set(piece.i, piece);
-    if (type === 'lamp') s.lampsBought++;
+    if (type === 'lamp') s.lampsPlaced++;
     s.ui.undo = { pieceId: piece.id, until: s.time + B.UNDO_WINDOW, refund: cost };
 
     R.beam.recompute(s);
@@ -1936,6 +1937,126 @@ body.wide #sideNote { display: block; }
     R.emit(s, 'flip', { id: p.id, type: p.type, c: c, r: r });
     return true;
   };
+
+  /* ---------- selection ---------- */
+
+  R.pieces.selected = function (s) {
+    if (s.ui.selectedPieceId === null) return null;
+    return R.pieces.byId(s, s.ui.selectedPieceId);
+  };
+
+  R.pieces.select = function (s, piece) {
+    s.ui.selectedPieceId = piece ? piece.id : null;
+    s.ui.moveMode = false;
+    R.emit(s, 'select', { id: s.ui.selectedPieceId });
+  };
+
+  R.pieces.deselect = function (s) {
+    if (s.ui.selectedPieceId === null && !s.ui.moveMode) return;
+    s.ui.selectedPieceId = null;
+    s.ui.moveMode = false;
+    R.emit(s, 'select', { id: null });
+  };
+
+  /* ---------- undo ---------- */
+
+  R.pieces.undoLive = function (s) {
+    var u = s.ui.undo;
+    if (!u) return null;
+    if (s.time > u.until) return null;
+    return R.pieces.byId(s, u.pieceId) ? u : null;
+  };
+
+  R.pieces.undo = function (s) {
+    var u = R.pieces.undoLive(s);
+    if (!u) return false;
+    var p = R.pieces.byId(s, u.pieceId);
+    removePiece(s, p, u.refund);
+    R.emit(s, 'undo', { refund: u.refund, c: p.c, r: p.r });
+    return true;
+  };
+
+  /* ---------- selling ---------- */
+
+  function removePiece(s, p, refund) {
+    s.gold += refund;
+    s.pieces.delete(p.i);
+    if (p.type === 'lamp' && s.lampsPlaced > 0) s.lampsPlaced--;
+    if (s.ui.selectedPieceId === p.id) {
+      s.ui.selectedPieceId = null;
+      s.ui.moveMode = false;
+    }
+    if (s.ui.undo && s.ui.undo.pieceId === p.id) s.ui.undo = null;
+    R.beam.recompute(s);
+  }
+
+  /* Full price back inside the undo window, otherwise the sell rate. */
+  R.pieces.refundFor = function (s, p) {
+    var u = s.ui.undo;
+    if (u && u.pieceId === p.id && s.time <= u.until) return p.cost;
+    return Math.floor(p.cost * B.SELL_RATE);
+  };
+
+  R.pieces.sell = function (s, c, r) {
+    var p = R.pieces.at(s, c, r);
+    if (!p) return false;
+    var refund = R.pieces.refundFor(s, p);
+    removePiece(s, p, refund);
+    R.emit(s, 'sell', { refund: refund, c: c, r: r, type: p.type });
+    return true;
+  };
+
+  /* ---------- moving ---------- */
+
+  R.pieces.move = function (s, fromC, fromR, toC, toR) {
+    var p = R.pieces.at(s, fromC, fromR);
+    if (!p) return false;
+    if (fromC === toC && fromR === toR) {
+      s.ui.moveMode = false;
+      return true;
+    }
+    if (!R.grid.isBuildable(s, toC, toR)) {
+      R.emit(s, 'denied', { reason: 'terrain', c: toC, r: toR, type: p.type });
+      return false;
+    }
+    s.pieces.delete(p.i);
+    p.c = toC;
+    p.r = toR;
+    p.i = R.grid.idx(toC, toR);
+    /* A moved piece is transparent to light while it re-forms. */
+    p.inactiveUntil = s.time + B.MOVE_REFORM;
+    s.pieces.set(p.i, p);
+    s.ui.moveMode = false;
+    R.beam.recompute(s);
+    R.emit(s, 'move', { id: p.id, type: p.type, c: toC, r: toR });
+    return true;
+  };
+
+  /* ---------- the core ---------- */
+
+  R.pieces.coreMaxLevel = function () {
+    return B.CORE_POWER.length;
+  };
+
+  R.pieces.coreUpgradeCost = function (s) {
+    if (s.coreLevel >= B.CORE_POWER.length) return null;
+    return B.CORE_UPGRADE_COST[s.coreLevel - 1];
+  };
+
+  R.pieces.upgradeCore = function (s) {
+    var cost = R.pieces.coreUpgradeCost(s);
+    if (cost === null) return false;
+    if (s.gold < cost) {
+      R.emit(s, 'denied', { reason: 'gold', cost: cost, core: true });
+      return false;
+    }
+    s.gold -= cost;
+    s.coreLevel++;
+    R.beam.recompute(s);
+    R.emit(s, 'upgrade', { level: s.coreLevel, cost: cost });
+    return true;
+  };
+
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 
@@ -2255,6 +2376,7 @@ body.wide #sideNote { display: block; }
     rd.tex.chevron = chevronTexture();
     rd.tex.ring = ringTexture();
     rd.tex.tileGlow = tileGlowTexture();
+    rd.tex.frame = frameTexture();
 
     buildLights();
     buildBoard(state);
@@ -2489,6 +2611,7 @@ body.wide #sideNote { display: block; }
 
     dyn.pieceObj = new THREE.Object3D();
     buildEnemies();
+    buildHighlights();
   };
 
   /*
@@ -2591,7 +2714,8 @@ body.wide #sideNote { display: block; }
       var x = R.grid.worldX(p.c);
       var z = R.grid.worldZ(p.r);
       var sc = pieceScale(state, p);
-      var dim = p.inactiveUntil > state.time ? 0.45 : 1;
+      var dragging = state.ui.drag && state.ui.drag.pieceId === p.id;
+      var dim = (p.inactiveUntil > state.time || dragging) ? 0.45 : 1;
       var diag = p.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
 
       if (p.type === 'mirror') {
@@ -2740,11 +2864,69 @@ body.wide #sideNote { display: block; }
     fill.finish();
   }
 
+
+  /* ---------- selection and drag highlights ---------- */
+
+  function frameTexture() {
+    var s = 64;
+    var cv = makeCanvas(s);
+    var g = cv.getContext('2d');
+    g.strokeStyle = 'rgba(255,255,255,1)';
+    g.lineWidth = 5;
+    g.lineJoin = 'round';
+    g.strokeRect(5, 5, s - 10, s - 10);
+    return new THREE.CanvasTexture(cv);
+  }
+
+  function buildHighlights() {
+    var quad = new THREE.PlaneGeometry(1, 1);
+    dyn.hoverTile = new THREE.Mesh(quad, additiveMaterial(rd.tex.frame, 0xffffff));
+    dyn.hoverTile.rotation.x = -Math.PI / 2;
+    dyn.hoverTile.scale.set(0.98, 0.98, 1);
+    dyn.hoverTile.position.y = 0.06;
+    dyn.hoverTile.renderOrder = 7;
+    dyn.hoverTile.visible = false;
+    scene.add(dyn.hoverTile);
+
+    dyn.selectRing = new THREE.Mesh(quad, additiveMaterial(rd.tex.frame, C.accent || 0x59e8ff));
+    dyn.selectRing.rotation.x = -Math.PI / 2;
+    dyn.selectRing.scale.set(1.0, 1.0, 1);
+    dyn.selectRing.position.y = 0.055;
+    dyn.selectRing.renderOrder = 7;
+    dyn.selectRing.visible = false;
+    scene.add(dyn.selectRing);
+  }
+
+  function drawHighlights(state) {
+    var d = state.ui.drag;
+    if (d && d.dragging && d.cell) {
+      dyn.hoverTile.visible = true;
+      dyn.hoverTile.position.x = R.grid.worldX(d.cell.c);
+      dyn.hoverTile.position.z = R.grid.worldZ(d.cell.r);
+      dyn.hoverTile.material.color.setHex(d.valid ? C.valid : C.invalid);
+    } else {
+      dyn.hoverTile.visible = false;
+    }
+
+    var p = R.pieces.selected(state);
+    if (p) {
+      var pulseScale = 1.0 + 0.05 * Math.sin(state.time * 7);
+      dyn.selectRing.visible = true;
+      dyn.selectRing.position.x = R.grid.worldX(p.c);
+      dyn.selectRing.position.z = R.grid.worldZ(p.r);
+      dyn.selectRing.scale.set(pulseScale, pulseScale, 1);
+      dyn.selectRing.material.color.setHex(state.ui.moveMode ? C.valid : 0x59e8ff);
+    } else {
+      dyn.selectRing.visible = false;
+    }
+  }
+
   rd.drawDynamic = function (state) {
     drawLitTiles(state);
     drawBeams(state);
     drawPieces(state);
     drawEnemies(state);
+    drawHighlights(state);
   };
 
   /* ---------- frame ---------- */
@@ -2975,9 +3157,15 @@ body.wide #sideNote { display: block; }
           }
           break;
         case 'place':
+          ui.bumpGold();
+          break;
         case 'sell':
+          ui.bumpGold();
+          ui.floaterAtCell('+' + e.refund, 'gold', e.c, e.r);
+          break;
         case 'upgrade':
           ui.bumpGold();
+          ui.notice('CORE LEVEL ' + e.level, 1.6);
           break;
         case 'kill':
           /* Stagger simultaneous kills so the numbers stay readable. */
@@ -3000,6 +3188,11 @@ body.wide #sideNote { display: block; }
           break;
         case 'unlock':
           ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
+          ui.flashPalette(e.type);
+          break;
+        case 'undo':
+          ui.bumpGold();
+          ui.floaterAtCell('+' + e.refund, 'gold', e.c, e.r);
           break;
         default:
           break;
@@ -3163,6 +3356,9 @@ body.wide #sideNote { display: block; }
       var s = R.state;
       if (s.phase === 'building') R.callWaveEarly(s);
     });
+    el.btnCore.addEventListener('click', function () {
+      R.pieces.upgradeCore(R.state);
+    });
     el.btnSpeed.addEventListener('click', function () {
       var s = R.state;
       var opts = B.SPEED_OPTIONS;
@@ -3190,6 +3386,192 @@ body.wide #sideNote { display: block; }
     }
   }
 
+
+  /* ---------- palette ---------- */
+
+  var PIECE_LABEL = {
+    mirror: 'MIRROR', splitter: 'SPLITTER', reflector: 'REFLECTOR', lamp: 'LAMP'
+  };
+
+  var paletteButtons = {};
+
+  function buildPalette() {
+    el.palette.innerHTML = '';
+    R.PIECE_TYPES.forEach(function (type) {
+      var b = node('button', 'pbtn');
+      b.type = 'button';
+      b.dataset.type = type;
+      b.appendChild(node('span', 'picon ' + type));
+      b.appendChild(node('span', 'pname', PIECE_LABEL[type]));
+      b.appendChild(node('span', 'pcost', '0<span class="c">&#9670;</span>'));
+      b.appendChild(node('span', 'plock', ''));
+      b.addEventListener('click', function () {
+        var s = R.state;
+        R.pieces.deselect(s);
+        s.ui.selectedType = type;
+        if (!s.unlocked[type]) {
+          ui.notice(PIECE_LABEL[type] + ' UNLOCKS AT WAVE ' + B.UNLOCK_WAVE[type], 2);
+        }
+      });
+      b.addEventListener('pointerdown', function (ev) {
+        R.input.beginPaletteDrag(type, ev);
+      });
+      el.palette.appendChild(b);
+      paletteButtons[type] = {
+        root: b,
+        cost: b.querySelector('.pcost'),
+        lock: b.querySelector('.plock')
+      };
+    });
+  }
+
+  function syncPalette(s) {
+    R.PIECE_TYPES.forEach(function (type) {
+      var pb = paletteButtons[type];
+      var unlocked = s.unlocked[type];
+      var cost = R.pieces.cost(s, type);
+      var stamp = type + '|' + unlocked + '|' + cost + '|' + (s.gold >= cost) + '|' + (s.ui.selectedType === type);
+      if (cache['pal' + type] === stamp) return;
+      cache['pal' + type] = stamp;
+      pb.cost.innerHTML = cost + '<span class="c">&#9670;</span>';
+      pb.root.classList.toggle('sel', s.ui.selectedType === type);
+      pb.root.classList.toggle('poor', unlocked && s.gold < cost);
+      pb.root.classList.toggle('locked', !unlocked);
+      pb.lock.textContent = unlocked ? '' : 'WAVE ' + B.UNLOCK_WAVE[type];
+      pb.lock.style.display = unlocked ? 'none' : 'flex';
+    });
+  }
+
+  ui.flashPalette = function (type) {
+    var pb = paletteButtons[type];
+    if (pb) pulse(pb.root, 'unlockflash');
+  };
+
+  /* ---------- action row ---------- */
+
+  function syncActionRow(s) {
+    var cost = R.pieces.coreUpgradeCost(s);
+    var coreStamp = s.coreLevel + '|' + cost + '|' + (cost !== null && s.gold >= cost);
+    if (cache.core !== coreStamp) {
+      cache.core = coreStamp;
+      el.btnCore.querySelector('.a1').innerHTML = 'CORE &#9650; Lv' + s.coreLevel;
+      el.btnCore.querySelector('.a2').innerHTML = cost === null
+        ? 'MAX'
+        : cost + '<span class="c">&#9670;</span>';
+      el.btnCore.classList.toggle('dim', cost === null || s.gold < cost);
+    }
+    var bonus = R.earlyCallBonus(s);
+    var nextStamp = s.phase + '|' + bonus;
+    if (cache.next !== nextStamp) {
+      cache.next = nextStamp;
+      el.btnNext.querySelector('.a2').innerHTML = '&#9654; +' + bonus + '<span class="c">&#9670;</span>';
+    }
+  }
+
+  /* ---------- action bar over a selected piece ---------- */
+
+  var actionBar = null;
+
+  function buildActionBar() {
+    actionBar = node('div', null);
+    actionBar.id = 'actionBar';
+    actionBar.style.display = 'none';
+    actionBar.appendChild(button('', 'FLIP', function () {
+      var s = R.state;
+      var p = R.pieces.selected(s);
+      if (p) R.pieces.flip(s, p.c, p.r);
+    }));
+    actionBar.appendChild(button('', 'MOVE', function () {
+      var s = R.state;
+      if (R.pieces.selected(s)) s.ui.moveMode = !s.ui.moveMode;
+    }));
+    actionBar.appendChild(button('danger', 'SELL', function () {
+      var s = R.state;
+      var p = R.pieces.selected(s);
+      if (p) R.pieces.sell(s, p.c, p.r);
+    }));
+    el.overlayHost.appendChild(actionBar);
+  }
+
+  function syncActionBar(s) {
+    var p = R.pieces.selected(s);
+    if (!p || s.ui.drag) {
+      if (actionBar.style.display !== 'none') actionBar.style.display = 'none';
+      cache.bar = null;
+      return;
+    }
+    var flip = actionBar.children[0];
+    var move = actionBar.children[1];
+    var sell = actionBar.children[2];
+    var stamp = p.id + '|' + p.c + '|' + p.r + '|' + s.ui.moveMode + '|' + R.pieces.refundFor(s, p) + '|' + R.render.boardW;
+    if (cache.bar === stamp) return;
+    cache.bar = stamp;
+
+    flip.style.display = p.type === 'reflector' ? 'none' : '';
+    move.textContent = s.ui.moveMode ? 'TAP TILE' : 'MOVE';
+    move.classList.toggle('danger', false);
+    sell.innerHTML = 'SELL ' + R.pieces.refundFor(s, p);
+
+    var above = p.r > 1;
+    var pos = R.render.projectCell(p.c, p.r, above ? 0.6 : 0);
+    actionBar.style.display = 'flex';
+    /* Keep the whole bar on screen, whichever edge the piece sits near. */
+    var half = actionBar.offsetWidth / 2 + 4;
+    actionBar.style.left = Math.round(R.util.clamp(pos.x, half, R.render.boardW - half)) + 'px';
+    actionBar.style.top = Math.round(above ? pos.y - 54 : pos.y + 30) + 'px';
+  }
+
+  /* ---------- undo chip ---------- */
+
+  var undoChip = null;
+
+  function buildUndoChip() {
+    undoChip = button('', 'UNDO', function () {
+      R.pieces.undo(R.state);
+    });
+    undoChip.id = 'undoChip';
+    undoChip.style.display = 'none';
+    el.overlayHost.appendChild(undoChip);
+  }
+
+  function syncUndoChip(s) {
+    var live = R.pieces.undoLive(s);
+    var show = !!live && !s.ui.drag;
+    if (cache.undo === show) return;
+    cache.undo = show;
+    undoChip.style.display = show ? 'block' : 'none';
+  }
+
+  /* ---------- drag ghost ---------- */
+
+  var ghost = null;
+
+  function buildGhost() {
+    ghost = node('div', null);
+    ghost.id = 'dragGhost';
+    ghost.style.display = 'none';
+    ghost.appendChild(node('span', 'picon'));
+    document.getElementById('app').appendChild(ghost);
+  }
+
+  function syncGhost(s) {
+    var d = s.ui.drag;
+    if (!d || !d.dragging) {
+      if (cache.ghost !== false) {
+        cache.ghost = false;
+        ghost.style.display = 'none';
+      }
+      return;
+    }
+    cache.ghost = true;
+    var app = document.getElementById('app').getBoundingClientRect();
+    ghost.style.display = 'block';
+    ghost.style.left = Math.round(d.x - app.left) + 'px';
+    ghost.style.top = Math.round(d.y - app.top - 70) + 'px';
+    ghost.firstChild.className = 'picon ' + d.type;
+    ghost.style.opacity = d.valid ? '1' : '0.45';
+  }
+
   /* ---------- lifecycle ---------- */
 
   ui.init = function () {
@@ -3214,9 +3596,12 @@ body.wide #sideNote { display: block; }
     el.btnCore = byId('btnCore');
     el.btnNext = byId('btnNext');
     el.palette = byId('palette');
-    /* The core upgrade arrives with the rest of the economy in a later phase. */
-    el.btnCore.hidden = true;
+    el.overlayHost = el.overlay;
     bindHudButtons();
+    buildPalette();
+    buildActionBar();
+    buildUndoChip();
+    buildGhost();
 
     for (var i = 0; i < FLOATER_POOL; i++) floaters.push(makeFloater());
     ui.el = el;
@@ -3228,6 +3613,11 @@ body.wide #sideNote { display: block; }
     ui.handleEvents(s);
     ui.update(s);
     syncHudButtons(s);
+    syncPalette(s);
+    syncActionRow(s);
+    syncActionBar(s);
+    syncUndoChip(s);
+    syncGhost(s);
     ui.syncOverlay(s);
   };
 
@@ -3249,8 +3639,9 @@ body.wide #sideNote { display: block; }
    ==================================================================
 */
 /*
- * Input. Pointer Events only, one active pointer at a time. A press on the
- * board becomes a tap (place or select) or, once it moves far enough, a drag.
+ * Input. Pointer Events only, one active pointer at a time. A press becomes a
+ * tap (place, select, or a move target) or, once it travels far enough, a drag
+ * that carries a piece to another tile.
  */
 (function (global) {
   'use strict';
@@ -3261,72 +3652,213 @@ body.wide #sideNote { display: block; }
 
   var DRAG_THRESHOLD = 10;
 
-  var active = null;
+  var press = null;
 
-  function boardCell(ev) {
-    return R.render.cellFromClient(ev.clientX, ev.clientY);
+  function cellAt(clientX, clientY) {
+    return R.render.cellFromClient(clientX, clientY);
   }
 
   function boardAcceptsInput(s) {
     return s.phase === 'building' || s.phase === 'wave';
   }
 
-  function onPointerDown(ev) {
-    var s = R.state;
-    if (!s || active) return;
-    if (!boardAcceptsInput(s)) return;
-    var cell = boardCell(ev);
-    if (!cell) return;
+  function dragTargetValid(s, drag, cell) {
+    if (!cell || !drag) return false;
+    if (drag.kind === 'piece') {
+      if (cell.i === R.grid.idx(drag.fromC, drag.fromR)) return true;
+      return R.grid.isBuildable(s, cell.c, cell.r);
+    }
+    return R.pieces.placementProblem(s, drag.type, cell.c, cell.r) === null;
+  }
 
+  function updateDrag(s, clientX, clientY) {
+    var d = s.ui.drag;
+    if (!d) return;
+    d.x = clientX;
+    d.y = clientY;
+    d.cell = cellAt(clientX, clientY);
+    d.valid = dragTargetValid(s, d, d.cell);
+  }
+
+  function startDrag(s) {
+    press.dragging = true;
+    s.ui.drag = {
+      kind: press.kind,
+      type: press.type,
+      pieceId: press.pieceId,
+      fromC: press.fromC,
+      fromR: press.fromR,
+      x: press.startX,
+      y: press.startY,
+      cell: null,
+      valid: false,
+      dragging: true
+    };
+    R.pieces.deselect(s);
+  }
+
+  function endDrag(s, commit) {
+    var d = s.ui.drag;
+    s.ui.drag = null;
+    if (!d || !commit) return;
+    if (!d.cell || !d.valid) return;
+    if (d.kind === 'piece') {
+      R.pieces.move(s, d.fromC, d.fromR, d.cell.c, d.cell.r);
+    } else {
+      R.pieces.place(s, d.type, d.cell.c, d.cell.r);
+    }
+  }
+
+  /* ---------- taps ---------- */
+
+  function handleTap(s, cell) {
+    var piece = R.pieces.at(s, cell.c, cell.r);
+    var selected = R.pieces.selected(s);
+
+    if (s.ui.moveMode && selected) {
+      if (piece && piece.id === selected.id) {
+        s.ui.moveMode = false;
+        return;
+      }
+      R.pieces.move(s, selected.c, selected.r, cell.c, cell.r);
+      return;
+    }
+
+    if (piece) {
+      if (selected && selected.id === piece.id) R.pieces.deselect(s);
+      else R.pieces.select(s, piece);
+      return;
+    }
+
+    if (selected) {
+      R.pieces.deselect(s);
+      return;
+    }
+
+    R.pieces.place(s, s.ui.selectedType, cell.c, cell.r);
+  }
+
+  /* ---------- pointer handlers ---------- */
+
+  function onBoardPointerDown(ev) {
+    var s = R.state;
+    if (!s || press) return;
+    if (!boardAcceptsInput(s)) return;
+    /* Widgets drawn over the board (action bar, undo chip) handle themselves. */
+    if (ev.target && ev.target.id !== 'gl') return;
+    var cell = cellAt(ev.clientX, ev.clientY);
+    if (!cell) return;
     ev.preventDefault();
-    active = {
+
+    var piece = R.pieces.at(s, cell.c, cell.r);
+    press = {
       id: ev.pointerId,
+      kind: piece ? 'piece' : 'tap',
+      type: piece ? piece.type : s.ui.selectedType,
+      pieceId: piece ? piece.id : null,
+      fromC: cell.c,
+      fromR: cell.r,
       startX: ev.clientX,
       startY: ev.clientY,
       cell: cell,
-      moved: false,
-      piece: R.pieces.at(s, cell.c, cell.r)
+      dragging: false
     };
   }
 
+  input.beginPaletteDrag = function (type, ev) {
+    var s = R.state;
+    if (!s || press) return;
+    if (!boardAcceptsInput(s)) return;
+    if (!s.unlocked[type]) return;
+    press = {
+      id: ev.pointerId,
+      kind: 'palette',
+      type: type,
+      pieceId: null,
+      fromC: -1,
+      fromR: -1,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      cell: null,
+      dragging: false
+    };
+  };
+
   function onPointerMove(ev) {
-    if (!active || ev.pointerId !== active.id) return;
-    var dx = ev.clientX - active.startX;
-    var dy = ev.clientY - active.startY;
-    if (!active.moved && (dx * dx + dy * dy) > DRAG_THRESHOLD * DRAG_THRESHOLD) {
-      active.moved = true;
+    var s = R.state;
+    if (!s || !press || ev.pointerId !== press.id) return;
+    var dx = ev.clientX - press.startX;
+    var dy = ev.clientY - press.startY;
+    if (!press.dragging) {
+      if (dx * dx + dy * dy <= DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+      if (press.kind === 'tap') {
+        /* A drag that started on an empty tile is not a gesture we use. */
+        press = null;
+        return;
+      }
+      startDrag(s);
     }
+    updateDrag(s, ev.clientX, ev.clientY);
   }
 
   function onPointerUp(ev) {
-    if (!active || ev.pointerId !== active.id) return;
     var s = R.state;
-    var press = active;
-    active = null;
-    if (!s || !boardAcceptsInput(s)) return;
-
-    if (press.moved) return;
-
-    var cell = boardCell(ev) || press.cell;
-    if (cell.i !== press.cell.i) return;
-
-    if (press.piece) {
-      R.pieces.flip(s, cell.c, cell.r);
-    } else {
-      R.pieces.place(s, s.ui.selectedType, cell.c, cell.r);
+    if (!press || ev.pointerId !== press.id) return;
+    var p = press;
+    press = null;
+    if (!s || !boardAcceptsInput(s)) {
+      s.ui.drag = null;
+      return;
     }
+
+    if (p.dragging) {
+      updateDrag(s, ev.clientX, ev.clientY);
+      endDrag(s, true);
+      return;
+    }
+
+    if (p.kind === 'palette') return;
+
+    var cell = cellAt(ev.clientX, ev.clientY);
+    if (!cell || cell.i !== R.grid.idx(p.fromC, p.fromR)) return;
+    handleTap(s, cell);
   }
 
   function onPointerCancel(ev) {
-    if (active && ev.pointerId === active.id) active = null;
+    var s = R.state;
+    if (!press || ev.pointerId !== press.id) return;
+    press = null;
+    if (s) endDrag(s, false);
+  }
+
+  /* ---------- keyboard (development convenience) ---------- */
+
+  function onKeyDown(ev) {
+    var s = R.state;
+    if (!s || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    var k = ev.key;
+    if (k >= '1' && k <= '4') {
+      s.ui.selectedType = R.PIECE_TYPES[Number(k) - 1];
+    } else if (k === 'f' || k === 'F') {
+      var p = R.pieces.selected(s);
+      if (p) R.pieces.flip(s, p.c, p.r);
+    } else if (k === ' ') {
+      if (s.phase === 'building') R.callWaveEarly(s);
+      ev.preventDefault();
+    } else if (k === 'p' || k === 'P') {
+      if (s.phase === 'paused') R.resume();
+      else R.pause();
+    }
   }
 
   input.init = function () {
     var board = document.getElementById('board');
-    board.addEventListener('pointerdown', onPointerDown);
+    board.addEventListener('pointerdown', onBoardPointerDown);
     global.addEventListener('pointermove', onPointerMove, { passive: true });
     global.addEventListener('pointerup', onPointerUp);
     global.addEventListener('pointercancel', onPointerCancel);
+    global.addEventListener('blur', function () { input.cancel(); });
+    global.addEventListener('keydown', onKeyDown);
 
     /* Stop the browser turning taps into zoom, scroll or text selection. */
     document.addEventListener('gesturestart', function (ev) { ev.preventDefault(); });
@@ -3338,7 +3870,8 @@ body.wide #sideNote { display: block; }
   };
 
   input.cancel = function () {
-    active = null;
+    press = null;
+    if (R.state) R.state.ui.drag = null;
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -3491,10 +4024,19 @@ body.wide #sideNote { display: block; }
     R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
   };
 
-  /* Starting a wave early trades building time for gold (bonus added later). */
+  /* Gold on offer for skipping the rest of the countdown. */
+  R.earlyCallBonus = function (s) {
+    if (s.phase !== 'building') return 0;
+    return Math.ceil(Math.max(0, s.countdown) * R.BALANCE.EARLY_CALL_RATE);
+  };
+
   R.callWaveEarly = function (s) {
     if (s.phase !== 'building') return;
+    var bonus = R.earlyCallBonus(s);
+    s.gold += bonus;
+    s.goldEarned += bonus;
     R.startWave(s);
+    R.emit(s, 'earlycall', { bonus: bonus });
   };
 
   R.finishWave = function (s) {

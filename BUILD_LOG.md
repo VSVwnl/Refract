@@ -249,3 +249,56 @@ Screenshots `shots/runstates-390x844-a-title.png`, `-b-defeat.png`, `-c-victory.
 **Result:** 26 Node tests and 44 browser checks pass. A complete run can be started, lost, restarted, won and restarted again, with no state or mesh residue across restarts.
 
 **Next step:** Phase 4 — the palette, the other three pieces, the action bar, drag-to-move, sell and undo, and core upgrades.
+
+
+### Session 1 — 2026-09-03 — Phase 4: the full toolset and economy
+
+**Goal:** Palette with unlocks, all four pieces, the action bar, drag to move, sell, undo, and core upgrades.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 4.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile-emulation tests with real touch and CDP touch drags.
+
+**Work completed:**
+
+- `src/07_pieces.js`: selection, the undo record and its window, sell with the 70 percent rate (full price inside the undo window), move with the 0.75 s re-form during which the piece is transparent to light, and core upgrades with the five costs and the level-6 cap.
+- `src/09_ui.js`: the palette (four buttons built from `R.PIECE_TYPES`, CSS-drawn icons, live cost including the lamp step, selected / unaffordable / locked states with the unlock wave printed on the lock), the action row (CORE with level and cost or MAX, NEXT WAVE with the early-call bonus), the action bar over a selected piece (FLIP hidden for reflectors, MOVE arming the next tap, SELL showing the actual refund), the undo chip, and the drag ghost.
+- `src/10_input.js` rewritten as a one-pointer state machine: press becomes tap or drag past 10 px; drags start from a palette button or a placed piece; release on a valid tile places or moves, anywhere else cancels; `pointercancel` and window blur cancel; extra fingers are ignored. Keyboard shortcuts 1-4, F, Space and P are kept as development conveniences.
+- Render: a green/red frame on the tile under a drag, a pulsing ring under the selected piece, and dimming of a piece while it is being dragged or is re-forming.
+- The early-call bonus is now paid (`ceil(remaining x 1.5)`); it was pulled forward from Phase 6 because the button was already on screen and a button that does nothing is worse than one that works.
+- `lampsBought` renamed `lampsPlaced` and decremented on sell, so the lamp price tracks the lamps on the board rather than the lamps ever purchased. Without this, selling a lamp silently raised the price of the next one forever.
+
+**Browser testing:** `node tools/qa.js toolset` at 390x844, 360x800 and 430x932. 55 checks each, all passing:
+
+- Palette: four buttons, mirror pre-selected, every button at least 48 px, lock labels "WAVE 2 / WAVE 4 / WAVE 7", a locked piece cannot be placed.
+- Splitter gives two branches measured at 5.5 each from a 10 power beam; the reflector gives exactly one return pass measured at 6; a lamp emits 5 on the road and the second lamp costs 110.
+- Action bar: appears on selection, has FLIP / MOVE / SELL with the live refund, hides FLIP on a reflector, stays fully on screen next to a column-0 piece (measured box 4 to 178 px), buttons 40 px tall.
+- FLIP turns a lamp a quarter turn. MOVE then tap relocates it, the moved piece re-forms for a measured 0.75 s during which its light is off, and it lights again afterwards.
+- Sell refunds 31 on a 45 splitter (70 percent, rounded down). Undo returns the full 20 on a mirror and removes it; after 3 s the chip is gone and selling the same mirror returns 14.
+- Drags: palette to tile places; piece to tile moves; onto the road, off the board and `pointercancel` all leave the piece where it was; a second finger buys nothing.
+- Core levels 1 to 6 measured on the board: beam 10, 13, 17, 22, 28, 35 and lamp 5, 6.5, 8.5, 11, 14, 17.5; costs 60, 100, 150, 220, 300 then MAX; total 830; the button refuses a seventh level.
+- Unaffordable palette buttons are marked and buy nothing. 25 draw calls, segment cap holds.
+
+Screenshots `shots/toolset-390x844-a-palette-locked.png`, `-b-all-pieces.png`, `-b-pieces-zoom.png`, `-c-actionbar.png`, `-d-core-max.png` reviewed: all four piece types are distinguishable at a glance (silver mirror slab, violet splitter cube with a bright diagonal, golden reflector cup, amber lamp with a facing notch).
+
+**Problems found:**
+
+1. **Taps on the action bar and the undo chip did nothing.** Those widgets live inside the board overlay, so their `pointerdown` bubbled to the board handler, which called `preventDefault()` and suppressed the click the browser would otherwise synthesise. It also armed a board press underneath them.
+2. **Every drag silently failed.** `dragTargetValid` read the module-level press object, but `onPointerUp` nulls that object before the final position update, so the drop was always marked invalid.
+3. The action bar was clipped off the left edge next to a column-0 piece.
+4. Test-only: freezing the clock left newly placed pieces stuck at 20 percent of their size, because the placement pop animation is driven by simulated time.
+
+**Fixes:**
+
+1. The board handler ignores any `pointerdown` whose target is not the canvas.
+2. `dragTargetValid` takes the drag record as an argument.
+3. The bar is clamped using its measured width rather than a guessed constant.
+4. Tests advance the clock briefly before taking screenshots. The behaviour is correct in play, where the clock always runs while pieces can be placed.
+
+**Decisions locked:** No changes to Part 1. Added: the lamp price is based on lamps currently placed; the early-call bonus is implemented in Phase 4 rather than Phase 6.
+
+**Balance changes:** none.
+
+**Result:** 26 Node tests and 55 browser checks at three viewports pass. Every control listed in specification section 19 now works by touch, and the gold arithmetic is exact at every step.
+
+**Next step:** Phase 5 — the remaining enemy types, bosses, HP scaling and Endless.

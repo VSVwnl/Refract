@@ -308,6 +308,7 @@
     rd.tex.chevron = chevronTexture();
     rd.tex.ring = ringTexture();
     rd.tex.tileGlow = tileGlowTexture();
+    rd.tex.frame = frameTexture();
 
     buildLights();
     buildBoard(state);
@@ -542,6 +543,7 @@
 
     dyn.pieceObj = new THREE.Object3D();
     buildEnemies();
+    buildHighlights();
   };
 
   /*
@@ -644,7 +646,8 @@
       var x = R.grid.worldX(p.c);
       var z = R.grid.worldZ(p.r);
       var sc = pieceScale(state, p);
-      var dim = p.inactiveUntil > state.time ? 0.45 : 1;
+      var dragging = state.ui.drag && state.ui.drag.pieceId === p.id;
+      var dim = (p.inactiveUntil > state.time || dragging) ? 0.45 : 1;
       var diag = p.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
 
       if (p.type === 'mirror') {
@@ -793,11 +796,69 @@
     fill.finish();
   }
 
+
+  /* ---------- selection and drag highlights ---------- */
+
+  function frameTexture() {
+    var s = 64;
+    var cv = makeCanvas(s);
+    var g = cv.getContext('2d');
+    g.strokeStyle = 'rgba(255,255,255,1)';
+    g.lineWidth = 5;
+    g.lineJoin = 'round';
+    g.strokeRect(5, 5, s - 10, s - 10);
+    return new THREE.CanvasTexture(cv);
+  }
+
+  function buildHighlights() {
+    var quad = new THREE.PlaneGeometry(1, 1);
+    dyn.hoverTile = new THREE.Mesh(quad, additiveMaterial(rd.tex.frame, 0xffffff));
+    dyn.hoverTile.rotation.x = -Math.PI / 2;
+    dyn.hoverTile.scale.set(0.98, 0.98, 1);
+    dyn.hoverTile.position.y = 0.06;
+    dyn.hoverTile.renderOrder = 7;
+    dyn.hoverTile.visible = false;
+    scene.add(dyn.hoverTile);
+
+    dyn.selectRing = new THREE.Mesh(quad, additiveMaterial(rd.tex.frame, C.accent || 0x59e8ff));
+    dyn.selectRing.rotation.x = -Math.PI / 2;
+    dyn.selectRing.scale.set(1.0, 1.0, 1);
+    dyn.selectRing.position.y = 0.055;
+    dyn.selectRing.renderOrder = 7;
+    dyn.selectRing.visible = false;
+    scene.add(dyn.selectRing);
+  }
+
+  function drawHighlights(state) {
+    var d = state.ui.drag;
+    if (d && d.dragging && d.cell) {
+      dyn.hoverTile.visible = true;
+      dyn.hoverTile.position.x = R.grid.worldX(d.cell.c);
+      dyn.hoverTile.position.z = R.grid.worldZ(d.cell.r);
+      dyn.hoverTile.material.color.setHex(d.valid ? C.valid : C.invalid);
+    } else {
+      dyn.hoverTile.visible = false;
+    }
+
+    var p = R.pieces.selected(state);
+    if (p) {
+      var pulseScale = 1.0 + 0.05 * Math.sin(state.time * 7);
+      dyn.selectRing.visible = true;
+      dyn.selectRing.position.x = R.grid.worldX(p.c);
+      dyn.selectRing.position.z = R.grid.worldZ(p.r);
+      dyn.selectRing.scale.set(pulseScale, pulseScale, 1);
+      dyn.selectRing.material.color.setHex(state.ui.moveMode ? C.valid : 0x59e8ff);
+    } else {
+      dyn.selectRing.visible = false;
+    }
+  }
+
   rd.drawDynamic = function (state) {
     drawLitTiles(state);
     drawBeams(state);
     drawPieces(state);
     drawEnemies(state);
+    drawHighlights(state);
   };
 
   /* ---------- frame ---------- */

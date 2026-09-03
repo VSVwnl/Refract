@@ -140,10 +140,19 @@
     R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
   };
 
-  /* Starting a wave early trades building time for gold (bonus added later). */
+  /* Gold on offer for skipping the rest of the countdown. */
+  R.earlyCallBonus = function (s) {
+    if (s.phase !== 'building') return 0;
+    return Math.ceil(Math.max(0, s.countdown) * R.BALANCE.EARLY_CALL_RATE);
+  };
+
   R.callWaveEarly = function (s) {
     if (s.phase !== 'building') return;
+    var bonus = R.earlyCallBonus(s);
+    s.gold += bonus;
+    s.goldEarned += bonus;
     R.startWave(s);
+    R.emit(s, 'earlycall', { bonus: bonus });
   };
 
   R.finishWave = function (s) {

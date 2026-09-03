@@ -426,4 +426,289 @@ module.exports = function (S) {
     ctx.eq(waves[10].n, 30, 'wave 11 has thirty enemies');
   };
 
+  /* Phase 4: the full palette, action bar, drag, sell, undo and core upgrades. */
+  S.toolset = async function (ctx) {
+    const snap = function () { return ctx.snapshot(); };
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const gold = function () { return st(function () { return R.state.gold; }); };
+    const lit = function () { return st(function () { return R.state.beam.litRoadCount; }); };
+    const pieceAt = function (c, r) {
+      return st(function (a) {
+        const p = R.pieces.at(R.state, a[0], a[1]);
+        return p ? { type: p.type, orient: p.orient, dir: p.dir, id: p.id } : null;
+      }, [c, r]);
+    };
+
+    await st(function () {
+      window.__REFRACT.restart(900);
+      window.__REFRACT.freeze(true);
+      window.__REFRACT.setGold(2000);
+      R.state.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+    });
+
+    /* --- palette --- */
+    const pal = await st(function () {
+      return Array.prototype.map.call(document.querySelectorAll('#palette .pbtn'), function (b) {
+        return {
+          type: b.dataset.type,
+          text: b.textContent.replace(/\s+/g, ' ').trim(),
+          sel: b.classList.contains('sel'),
+          locked: b.classList.contains('locked'),
+          w: Math.round(b.getBoundingClientRect().width),
+          h: Math.round(b.getBoundingClientRect().height)
+        };
+      });
+    });
+    ctx.log('  palette: ' + JSON.stringify(pal));
+    ctx.eq(pal.length, 4, 'four palette buttons');
+    ctx.eq(pal[0].sel, true, 'mirror is selected at run start');
+    ctx.check(pal.every(function (b) { return b.w >= 48 && b.h >= 48; }), 'palette buttons are at least 48px');
+    ctx.check(pal[3].text.indexOf('90') >= 0, 'lamp costs 90 first time');
+
+    /* --- lock states --- */
+    await st(function () {
+      R.restartRun(901);
+      window.__REFRACT.freeze(true);
+    });
+    const locked = await st(function () {
+      return Array.prototype.map.call(document.querySelectorAll('#palette .pbtn'), function (b) {
+        return b.classList.contains('locked') ? b.querySelector('.plock').textContent : 'open';
+      });
+    });
+    ctx.eq(JSON.stringify(locked), '["open","WAVE 2","WAVE 4","WAVE 7"]', 'lock labels');
+    await ctx.tap('#palette .pbtn[data-type="splitter"]');
+    await ctx.tapCell(5, 5);
+    ctx.eq(await st(function () { return R.state.pieces.size; }), 0, 'a locked piece cannot be placed');
+    await ctx.snap('a-palette-locked');
+
+    /* --- each piece type behaves --- */
+    await st(function () {
+      R.restartRun(902);
+      window.__REFRACT.freeze(true);
+      window.__REFRACT.setGold(2000);
+      R.state.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+    });
+
+    await ctx.tap('#palette .pbtn[data-type="splitter"]');
+    await ctx.tapCell(7, 6);
+    const sp = await pieceAt(7, 6);
+    ctx.eq(sp && sp.type, 'splitter', 'splitter placed by palette then tile');
+    const branches = await st(function () {
+      return {
+        straight: Math.round(R.state.beam.lit[R.grid.idx(7, 5)] * 100) / 100,
+        bent: Math.round(R.state.beam.lit[R.grid.idx(6, 6)] * 100) / 100
+      };
+    });
+    ctx.eq(branches.straight, 5.5, 'straight branch at 55 percent');
+    ctx.eq(branches.bent, 5.5, 'reflected branch at 55 percent');
+    ctx.eq(await gold(), 2000 - 45, 'splitter cost 45');
+
+    await ctx.tap('#palette .pbtn[data-type="reflector"]');
+    await ctx.tapCell(7, 8);
+    ctx.eq((await pieceAt(7, 8)).type, 'reflector', 'reflector placed');
+    const ret = await st(function () {
+      let south = 0;
+      let power = 0;
+      for (let i = 0; i < R.state.beam.segCount; i++) {
+        const g = R.state.beam.segments[i];
+        if (g.dir === R.S) { south++; power = Math.round(g.powerStart * 100) / 100; }
+      }
+      return { south: south, power: power };
+    });
+    ctx.eq(ret.south, 1, 'exactly one return pass');
+    ctx.eq(ret.power, 6, 'return pass at 60 percent');
+
+    await ctx.tap('#palette .pbtn[data-type="lamp"]');
+    await ctx.tapCell(0, 6);
+    let lamp = await pieceAt(0, 6);
+    ctx.eq(lamp.type, 'lamp', 'lamp placed');
+    ctx.eq(await st(function () { return Math.round(R.state.beam.lit[R.grid.idx(2, 6)] * 100) / 100; }), 5,
+      'lamp emits at half core power');
+    const lampCost2 = await st(function () { return R.pieces.cost(R.state, 'lamp'); });
+    ctx.eq(lampCost2, 110, 'the second lamp costs 20 more');
+    await st(function () { window.__REFRACT.step(0.4); });
+    await ctx.page.waitForTimeout(60);
+    await ctx.snap('b-all-pieces');
+    await ctx.page.screenshot({
+      path: 'shots/' + ctx.prefix + '-b-pieces-zoom.png',
+      clip: { x: 0, y: 330, width: ctx.width, height: 300 }
+    });
+
+    /* --- action bar: select, flip, sell --- */
+    await ctx.tapCell(0, 6);
+    let bar = await st(function () {
+      const b = document.getElementById('actionBar');
+      return { shown: b.style.display !== 'none', text: b.textContent.replace(/\s+/g, ' ').trim() };
+    });
+    ctx.check(bar.shown, 'action bar appears on a selected piece');
+    ctx.check(bar.text.indexOf('FLIP') >= 0 && bar.text.indexOf('MOVE') >= 0 && bar.text.indexOf('SELL') >= 0,
+      'action bar has FLIP, MOVE and SELL (' + bar.text + ')');
+    const barBox = await st(function () {
+      const b = document.getElementById('actionBar').getBoundingClientRect();
+      return { l: Math.round(b.left), r: Math.round(b.right), t: Math.round(b.top), h: Math.round(b.height) };
+    });
+    ctx.check(barBox.l >= 0 && barBox.r <= ctx.width,
+      'the action bar stays on screen next to an edge piece (' + JSON.stringify(barBox) + ')');
+    ctx.check(barBox.h >= 40, 'action bar buttons are tall enough');
+    await ctx.snap('c-actionbar');
+
+    const dirBefore = (await pieceAt(0, 6)).dir;
+    await ctx.tap('#actionBar button:nth-child(1)');
+    ctx.eq((await pieceAt(0, 6)).dir, (dirBefore + 1) % 4, 'FLIP turns the lamp a quarter turn');
+
+    await ctx.tapCell(7, 8);
+    bar = await st(function () {
+      const b = document.getElementById('actionBar');
+      return b.children[0].style.display;
+    });
+    ctx.eq(bar, 'none', 'a reflector has no FLIP action');
+
+    /* --- MOVE then tap --- */
+    await ctx.tapCell(0, 6);
+    await ctx.tap('#actionBar button:nth-child(2)');
+    ctx.eq(await st(function () { return R.state.ui.moveMode; }), true, 'MOVE arms the next tap');
+    await ctx.tapCell(0, 8);
+    ctx.eq(await pieceAt(0, 6), null, 'the lamp left its old tile');
+    ctx.eq((await pieceAt(0, 8)).type, 'lamp', 'the lamp arrived on the new tile');
+    const reform = await st(function () {
+      const p = R.pieces.at(R.state, 0, 8);
+      return Math.round((p.inactiveUntil - R.state.time) * 100) / 100;
+    });
+    ctx.near(reform, 0.75, 0.02, 'a moved piece re-forms for 0.75 s');
+    ctx.eq(await st(function () { return Math.round(R.state.beam.lit[R.grid.idx(2, 8)] * 100) / 100; }), 0,
+      'the light is off while it re-forms');
+    await st(function () { window.__REFRACT.step(0.8); });
+    ctx.check(await st(function () {
+      const p = R.pieces.at(R.state, 0, 8);
+      const c = p.c + R.grid.DC[p.dir];
+      const r = p.r + R.grid.DR[p.dir];
+      return R.grid.inBounds(c, r) && R.state.beam.lit[R.grid.idx(c, r)] > 0;
+    }), 'the lamp lights again once re-formed');
+
+    /* --- sell at 70 percent --- */
+    await st(function () { window.__REFRACT.step(4); });
+    const goldBeforeSell = await gold();
+    await ctx.tapCell(7, 6);
+    await ctx.tap('#actionBar button:nth-child(3)');
+    ctx.eq(await pieceAt(7, 6), null, 'the splitter is gone');
+    ctx.eq(await gold(), goldBeforeSell + 31, 'sell refunds 70 percent of 45, rounded down');
+
+    /* --- undo returns the full price --- */
+    const goldBeforeBuy = await gold();
+    await ctx.tap('#palette .pbtn[data-type="mirror"]');
+    await ctx.tapCell(3, 4);
+    ctx.eq(await gold(), goldBeforeBuy - 20, 'mirror bought');
+    const chip = await st(function () {
+      const c = document.getElementById('undoChip');
+      return { shown: c.style.display !== 'none', text: c.textContent.trim() };
+    });
+    ctx.check(chip.shown, 'the undo chip appears');
+    await ctx.tap('#undoChip');
+    ctx.eq(await gold(), goldBeforeBuy, 'undo returns the full price');
+    ctx.eq(await pieceAt(3, 4), null, 'undo removes the piece');
+
+    /* --- the undo window expires --- */
+    await ctx.tapCell(3, 4);
+    await st(function () { window.__REFRACT.step(3.2); });
+    await ctx.page.waitForTimeout(80);
+    ctx.eq(await st(function () { return document.getElementById('undoChip').style.display; }), 'none',
+      'the chip disappears after three seconds');
+    const g2 = await gold();
+    await ctx.tapCell(3, 4);
+    await ctx.tap('#actionBar button:nth-child(3)');
+    ctx.eq(await gold(), g2 + 14, 'selling after the window refunds 70 percent of 20');
+
+    /* --- drag a palette button onto a tile --- */
+    const before = await st(function () { return R.state.pieces.size; });
+    const btn = await ctx.page.$('#palette .pbtn[data-type="mirror"]');
+    const box = await btn.boundingBox();
+    const target = await ctx.cellPoint(2, 4);
+    await ctx.drag({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, target);
+    ctx.eq(await st(function () { return R.state.pieces.size; }), before + 1, 'dragging from the palette places a piece');
+    ctx.eq((await pieceAt(2, 4)).type, 'mirror', 'the dragged mirror landed on the target tile');
+
+    /* --- drag a placed piece to a new tile --- */
+    await ctx.drag(await ctx.cellPoint(2, 4), await ctx.cellPoint(4, 4));
+    ctx.eq(await pieceAt(2, 4), null, 'the piece left the old tile');
+    ctx.eq((await pieceAt(4, 4)).type, 'mirror', 'the piece arrived on the new tile');
+
+    /* --- drag onto the road: refused, piece stays --- */
+    await ctx.drag(await ctx.cellPoint(4, 4), await ctx.cellPoint(4, 3));
+    ctx.eq((await pieceAt(4, 4)).type, 'mirror', 'a drag onto the road leaves the piece where it was');
+
+    /* --- drag outside the window cancels --- */
+    const p1 = await ctx.cellPoint(4, 4);
+    await ctx.drag(p1, { x: 5, y: ctx.height - 4 });
+    ctx.eq((await pieceAt(4, 4)).type, 'mirror', 'a drag released off the board cancels');
+
+    /* --- pointercancel --- */
+    await ctx.drag(p1, await ctx.cellPoint(5, 4), { cancel: true });
+    ctx.eq((await pieceAt(4, 4)).type, 'mirror', 'a cancelled drag leaves the piece alone');
+    ctx.eq(await pieceAt(5, 4), null, 'and does not create one');
+
+    /* --- a second finger is ignored --- */
+    const twoFinger = await st(function () { return R.state.pieces.size; });
+    await ctx.cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: p1.x, y: p1.y, id: 1 }]
+    });
+    const other = await ctx.cellPoint(6, 8);
+    await ctx.cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: p1.x, y: p1.y, id: 1 }, { x: other.x, y: other.y, id: 2 }]
+    });
+    await ctx.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [{ x: p1.x, y: p1.y, id: 1 }] });
+    await ctx.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await ctx.page.waitForTimeout(80);
+    ctx.eq(await st(function () { return R.state.pieces.size; }), twoFinger, 'a second finger buys nothing');
+
+    /* --- core upgrades --- */
+    await st(function () {
+      R.restartRun(903);
+      window.__REFRACT.freeze(true);
+      window.__REFRACT.setGold(2000);
+      R.state.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      window.__REFRACT.place('mirror', 7, 3, 1);
+      window.__REFRACT.place('lamp', 0, 6, R.E);
+    });
+    const levels = [];
+    for (let i = 0; i < 6; i++) {
+      levels.push(await st(function () {
+        const s = R.state;
+        return {
+          lv: s.coreLevel,
+          cost: R.pieces.coreUpgradeCost(s),
+          beam: Math.round(s.beam.lit[R.grid.idx(6, 3)] * 100) / 100,
+          lamp: Math.round(s.beam.lit[R.grid.idx(2, 6)] * 100) / 100,
+          label: document.getElementById('btnCore').textContent.replace(/\s+/g, ' ').trim()
+        };
+      }));
+      if (i < 5) await ctx.tap('#btnCore');
+    }
+    ctx.log('  core levels: ' + JSON.stringify(levels));
+    ctx.eq(JSON.stringify(levels.map(function (x) { return x.beam; })), '[10,13,17,22,28,35]', 'core power per level');
+    ctx.eq(JSON.stringify(levels.map(function (x) { return x.lamp; })), '[5,6.5,8.5,11,14,17.5]', 'lamps scale with the core');
+    ctx.eq(JSON.stringify(levels.map(function (x) { return x.cost; })), '[60,100,150,220,300,null]', 'upgrade costs');
+    ctx.check(levels[5].label.indexOf('MAX') >= 0, 'the core button reads MAX at level 6');
+    ctx.eq(await gold(), 2000 - 20 - 90 - 830, 'total spend is the pieces plus 830 for the core');
+    await ctx.tap('#btnCore');
+    ctx.eq(await st(function () { return R.state.coreLevel; }), 6, 'the core cannot go past level 6');
+    await ctx.snap('d-core-max');
+
+    /* --- affordability --- */
+    await st(function () { window.__REFRACT.setGold(10); });
+    const poor = await st(function () {
+      return Array.prototype.map.call(document.querySelectorAll('#palette .pbtn'), function (b) {
+        return b.classList.contains('poor');
+      });
+    });
+    ctx.eq(JSON.stringify(poor), '[true,true,true,true]', 'unaffordable palette buttons are marked');
+    await ctx.tapCell(5, 8);
+    ctx.eq(await st(function () { return R.state.pieces.size; }), 2, 'nothing is bought without gold');
+
+    const info = await st(function () { return R.render.info(); });
+    ctx.check(info.calls <= 150, 'draw calls in budget: ' + info.calls);
+    ctx.check(await st(function () { return R.state.beam.segCount <= R.BALANCE.MAX_SEGMENTS; }), 'segment cap holds');
+  };
+
 };

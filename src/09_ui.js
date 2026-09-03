@@ -182,9 +182,15 @@
           }
           break;
         case 'place':
+          ui.bumpGold();
+          break;
         case 'sell':
+          ui.bumpGold();
+          ui.floaterAtCell('+' + e.refund, 'gold', e.c, e.r);
+          break;
         case 'upgrade':
           ui.bumpGold();
+          ui.notice('CORE LEVEL ' + e.level, 1.6);
           break;
         case 'kill':
           /* Stagger simultaneous kills so the numbers stay readable. */
@@ -207,6 +213,11 @@
           break;
         case 'unlock':
           ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
+          ui.flashPalette(e.type);
+          break;
+        case 'undo':
+          ui.bumpGold();
+          ui.floaterAtCell('+' + e.refund, 'gold', e.c, e.r);
           break;
         default:
           break;
@@ -370,6 +381,9 @@
       var s = R.state;
       if (s.phase === 'building') R.callWaveEarly(s);
     });
+    el.btnCore.addEventListener('click', function () {
+      R.pieces.upgradeCore(R.state);
+    });
     el.btnSpeed.addEventListener('click', function () {
       var s = R.state;
       var opts = B.SPEED_OPTIONS;
@@ -397,6 +411,192 @@
     }
   }
 
+
+  /* ---------- palette ---------- */
+
+  var PIECE_LABEL = {
+    mirror: 'MIRROR', splitter: 'SPLITTER', reflector: 'REFLECTOR', lamp: 'LAMP'
+  };
+
+  var paletteButtons = {};
+
+  function buildPalette() {
+    el.palette.innerHTML = '';
+    R.PIECE_TYPES.forEach(function (type) {
+      var b = node('button', 'pbtn');
+      b.type = 'button';
+      b.dataset.type = type;
+      b.appendChild(node('span', 'picon ' + type));
+      b.appendChild(node('span', 'pname', PIECE_LABEL[type]));
+      b.appendChild(node('span', 'pcost', '0<span class="c">&#9670;</span>'));
+      b.appendChild(node('span', 'plock', ''));
+      b.addEventListener('click', function () {
+        var s = R.state;
+        R.pieces.deselect(s);
+        s.ui.selectedType = type;
+        if (!s.unlocked[type]) {
+          ui.notice(PIECE_LABEL[type] + ' UNLOCKS AT WAVE ' + B.UNLOCK_WAVE[type], 2);
+        }
+      });
+      b.addEventListener('pointerdown', function (ev) {
+        R.input.beginPaletteDrag(type, ev);
+      });
+      el.palette.appendChild(b);
+      paletteButtons[type] = {
+        root: b,
+        cost: b.querySelector('.pcost'),
+        lock: b.querySelector('.plock')
+      };
+    });
+  }
+
+  function syncPalette(s) {
+    R.PIECE_TYPES.forEach(function (type) {
+      var pb = paletteButtons[type];
+      var unlocked = s.unlocked[type];
+      var cost = R.pieces.cost(s, type);
+      var stamp = type + '|' + unlocked + '|' + cost + '|' + (s.gold >= cost) + '|' + (s.ui.selectedType === type);
+      if (cache['pal' + type] === stamp) return;
+      cache['pal' + type] = stamp;
+      pb.cost.innerHTML = cost + '<span class="c">&#9670;</span>';
+      pb.root.classList.toggle('sel', s.ui.selectedType === type);
+      pb.root.classList.toggle('poor', unlocked && s.gold < cost);
+      pb.root.classList.toggle('locked', !unlocked);
+      pb.lock.textContent = unlocked ? '' : 'WAVE ' + B.UNLOCK_WAVE[type];
+      pb.lock.style.display = unlocked ? 'none' : 'flex';
+    });
+  }
+
+  ui.flashPalette = function (type) {
+    var pb = paletteButtons[type];
+    if (pb) pulse(pb.root, 'unlockflash');
+  };
+
+  /* ---------- action row ---------- */
+
+  function syncActionRow(s) {
+    var cost = R.pieces.coreUpgradeCost(s);
+    var coreStamp = s.coreLevel + '|' + cost + '|' + (cost !== null && s.gold >= cost);
+    if (cache.core !== coreStamp) {
+      cache.core = coreStamp;
+      el.btnCore.querySelector('.a1').innerHTML = 'CORE &#9650; Lv' + s.coreLevel;
+      el.btnCore.querySelector('.a2').innerHTML = cost === null
+        ? 'MAX'
+        : cost + '<span class="c">&#9670;</span>';
+      el.btnCore.classList.toggle('dim', cost === null || s.gold < cost);
+    }
+    var bonus = R.earlyCallBonus(s);
+    var nextStamp = s.phase + '|' + bonus;
+    if (cache.next !== nextStamp) {
+      cache.next = nextStamp;
+      el.btnNext.querySelector('.a2').innerHTML = '&#9654; +' + bonus + '<span class="c">&#9670;</span>';
+    }
+  }
+
+  /* ---------- action bar over a selected piece ---------- */
+
+  var actionBar = null;
+
+  function buildActionBar() {
+    actionBar = node('div', null);
+    actionBar.id = 'actionBar';
+    actionBar.style.display = 'none';
+    actionBar.appendChild(button('', 'FLIP', function () {
+      var s = R.state;
+      var p = R.pieces.selected(s);
+      if (p) R.pieces.flip(s, p.c, p.r);
+    }));
+    actionBar.appendChild(button('', 'MOVE', function () {
+      var s = R.state;
+      if (R.pieces.selected(s)) s.ui.moveMode = !s.ui.moveMode;
+    }));
+    actionBar.appendChild(button('danger', 'SELL', function () {
+      var s = R.state;
+      var p = R.pieces.selected(s);
+      if (p) R.pieces.sell(s, p.c, p.r);
+    }));
+    el.overlayHost.appendChild(actionBar);
+  }
+
+  function syncActionBar(s) {
+    var p = R.pieces.selected(s);
+    if (!p || s.ui.drag) {
+      if (actionBar.style.display !== 'none') actionBar.style.display = 'none';
+      cache.bar = null;
+      return;
+    }
+    var flip = actionBar.children[0];
+    var move = actionBar.children[1];
+    var sell = actionBar.children[2];
+    var stamp = p.id + '|' + p.c + '|' + p.r + '|' + s.ui.moveMode + '|' + R.pieces.refundFor(s, p) + '|' + R.render.boardW;
+    if (cache.bar === stamp) return;
+    cache.bar = stamp;
+
+    flip.style.display = p.type === 'reflector' ? 'none' : '';
+    move.textContent = s.ui.moveMode ? 'TAP TILE' : 'MOVE';
+    move.classList.toggle('danger', false);
+    sell.innerHTML = 'SELL ' + R.pieces.refundFor(s, p);
+
+    var above = p.r > 1;
+    var pos = R.render.projectCell(p.c, p.r, above ? 0.6 : 0);
+    actionBar.style.display = 'flex';
+    /* Keep the whole bar on screen, whichever edge the piece sits near. */
+    var half = actionBar.offsetWidth / 2 + 4;
+    actionBar.style.left = Math.round(R.util.clamp(pos.x, half, R.render.boardW - half)) + 'px';
+    actionBar.style.top = Math.round(above ? pos.y - 54 : pos.y + 30) + 'px';
+  }
+
+  /* ---------- undo chip ---------- */
+
+  var undoChip = null;
+
+  function buildUndoChip() {
+    undoChip = button('', 'UNDO', function () {
+      R.pieces.undo(R.state);
+    });
+    undoChip.id = 'undoChip';
+    undoChip.style.display = 'none';
+    el.overlayHost.appendChild(undoChip);
+  }
+
+  function syncUndoChip(s) {
+    var live = R.pieces.undoLive(s);
+    var show = !!live && !s.ui.drag;
+    if (cache.undo === show) return;
+    cache.undo = show;
+    undoChip.style.display = show ? 'block' : 'none';
+  }
+
+  /* ---------- drag ghost ---------- */
+
+  var ghost = null;
+
+  function buildGhost() {
+    ghost = node('div', null);
+    ghost.id = 'dragGhost';
+    ghost.style.display = 'none';
+    ghost.appendChild(node('span', 'picon'));
+    document.getElementById('app').appendChild(ghost);
+  }
+
+  function syncGhost(s) {
+    var d = s.ui.drag;
+    if (!d || !d.dragging) {
+      if (cache.ghost !== false) {
+        cache.ghost = false;
+        ghost.style.display = 'none';
+      }
+      return;
+    }
+    cache.ghost = true;
+    var app = document.getElementById('app').getBoundingClientRect();
+    ghost.style.display = 'block';
+    ghost.style.left = Math.round(d.x - app.left) + 'px';
+    ghost.style.top = Math.round(d.y - app.top - 70) + 'px';
+    ghost.firstChild.className = 'picon ' + d.type;
+    ghost.style.opacity = d.valid ? '1' : '0.45';
+  }
+
   /* ---------- lifecycle ---------- */
 
   ui.init = function () {
@@ -421,9 +621,12 @@
     el.btnCore = byId('btnCore');
     el.btnNext = byId('btnNext');
     el.palette = byId('palette');
-    /* The core upgrade arrives with the rest of the economy in a later phase. */
-    el.btnCore.hidden = true;
+    el.overlayHost = el.overlay;
     bindHudButtons();
+    buildPalette();
+    buildActionBar();
+    buildUndoChip();
+    buildGhost();
 
     for (var i = 0; i < FLOATER_POOL; i++) floaters.push(makeFloater());
     ui.el = el;
@@ -435,6 +638,11 @@
     ui.handleEvents(s);
     ui.update(s);
     syncHudButtons(s);
+    syncPalette(s);
+    syncActionRow(s);
+    syncActionBar(s);
+    syncUndoChip(s);
+    syncGhost(s);
     ui.syncOverlay(s);
   };
 

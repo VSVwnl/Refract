@@ -74,7 +74,7 @@
       path: board.path,
       pieces: new Map(),
       nextPieceId: 1,
-      lampsBought: 0,
+      lampsPlaced: 0,
       enemies: [],
       nextEnemyId: 1,
       spawnQueue: [],
@@ -88,6 +88,7 @@
       ui: {
         selectedType: 'mirror',
         selectedPieceId: null,
+        moveMode: false,
         drag: null,
         hintsShown: {},
         undo: null,
