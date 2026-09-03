@@ -15,8 +15,13 @@
     01_util.js
     03_state.js
     04_grid.js
+    05_beam.js
+    07_pieces.js
     08_render.js
+    09_ui.js
+    10_input.js
     11_game.js
+    99_debug.js
 -->
 <style>
 /*
@@ -1091,13 +1096,8 @@ body.wide #sideNote { display: block; }
       spawnCursor: 0,
       waveEnemiesTotal: 0,
       waveEnemiesLeft: 0,
-      beam: {
-        segments: [],
-        lit: new Float32Array(cells),
-        litRoadCount: 0,
-        totalPower: 0,
-        version: 0
-      },
+      /* The beam result object owns its own pooled segment records. */
+      beam: R.beam.makeResult(),
       leaksBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
       damageBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
       ui: {
@@ -1231,6 +1231,465 @@ body.wide #sideNote { display: block; }
 <script>
 /*
    ==================================================================
+   05_beam.js
+   ==================================================================
+*/
+/*
+ * The beam solver. A pure trace over the grid: light leaves each source, runs
+ * in a straight line until it meets a piece, an enemy or the edge of the board,
+ * and loses power to every enemy it passes through. Nothing here touches the
+ * DOM or the renderer, so it can be unit tested in isolation.
+ */
+(function (global) {
+  'use strict';
+  var R = global.R || (global.R = {});
+  var B = R.BALANCE;
+  var CELLS = B.COLS * B.ROWS;
+
+  R.beam = {};
+
+  /* (cell, direction) pairs already travelled by the current source. */
+  var visitStamp = new Int32Array(CELLS * 4);
+  var visitGen = 0;
+
+  /* Scratch used to order the enemies in one cell along the beam. */
+  var orderScratch = [];
+
+  /* ---------- result objects ---------- */
+
+  function makeSegment() {
+    return {
+      c0: 0, r0: 0, c1: 0, r1: 0,
+      x0: 0, z0: 0, x1: 0, z1: 0,
+      dir: 0,
+      bendAtStart: false,
+      powerStart: 0,
+      powerEnd: 0,
+      sourceId: 0
+    };
+  }
+
+  R.beam.makeResult = function () {
+    var segs = new Array(B.MAX_SEGMENTS);
+    for (var i = 0; i < B.MAX_SEGMENTS; i++) segs[i] = makeSegment();
+    return {
+      segments: segs,
+      segCount: 0,
+      lit: new Float32Array(CELLS),
+      litRoadCount: 0,
+      totalPower: 0,
+      overflow: false,
+      version: 0
+    };
+  };
+
+  /* ---------- enemy ordering ---------- */
+
+  /*
+   * Enemies in one cell are met in the order the light reaches them, which
+   * depends on the direction the beam is travelling.
+   */
+  function orderAlong(list, dir) {
+    var dc = R.grid.DC[dir];
+    var dr = R.grid.DR[dir];
+    orderScratch.length = 0;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      var p = e.x * dc + e.z * dr;
+      var j = orderScratch.length;
+      while (j > 0 && (orderScratch[j - 1].x * dc + orderScratch[j - 1].z * dr) > p) {
+        orderScratch[j] = orderScratch[j - 1];
+        j--;
+      }
+      orderScratch[j] = e;
+    }
+    return orderScratch;
+  }
+
+  /* ---------- the trace ---------- */
+
+  var out = null;
+  var occupancy = null;
+  var stepDt = 0;
+  var kind = null;
+  var pieces = null;
+  var nowTime = 0;
+
+  var bendPending = false;
+
+  function emit(x0, z0, x1, z1, dir, c0, r0, c1, r1, powerStart, powerEnd, sourceId) {
+    if (out.segCount >= B.MAX_SEGMENTS) {
+      out.overflow = true;
+      return false;
+    }
+    var s = out.segments[out.segCount++];
+    s.x0 = x0; s.z0 = z0; s.x1 = x1; s.z1 = z1;
+    s.c0 = c0; s.r0 = r0; s.c1 = c1; s.r1 = r1;
+    s.dir = dir;
+    s.bendAtStart = bendPending;
+    bendPending = false;
+    s.powerStart = powerStart;
+    s.powerEnd = powerEnd;
+    s.sourceId = sourceId;
+    return true;
+  }
+
+  function trace(startC, startR, dir, power, depth, sourceId, fromPiece) {
+    if (depth > B.MAX_DEPTH || power < B.MIN_POWER || out.overflow) return;
+    bendPending = !!fromPiece;
+
+    var DC = R.grid.DC;
+    var DR = R.grid.DR;
+    var c = startC;
+    var r = startR;
+    var segC = startC;
+    var segR = startR;
+    var segX = R.grid.worldX(startC);
+    var segZ = R.grid.worldZ(startR);
+    var segPower = power;
+
+    for (;;) {
+      var nc = c + DC[dir];
+      var nr = r + DR[dir];
+      var edgeX = R.grid.worldX(c) + DC[dir] * 0.5;
+      var edgeZ = R.grid.worldZ(r) + DR[dir] * 0.5;
+
+      if (!R.grid.inBounds(nc, nr)) {
+        emit(segX, segZ, edgeX, edgeZ, dir, segC, segR, c, r, segPower, power, sourceId);
+        return;
+      }
+
+      var i = nr * B.COLS + nc;
+      var key = i * 4 + dir;
+      if (visitStamp[key] === visitGen) {
+        /* Light never retraces the same cell in the same direction. */
+        emit(segX, segZ, edgeX, edgeZ, dir, segC, segR, c, r, segPower, power, sourceId);
+        return;
+      }
+      visitStamp[key] = visitGen;
+
+      c = nc;
+      r = nr;
+      if (power > out.lit[i]) out.lit[i] = power;
+      out.totalPower += power;
+
+      var list = occupancy ? occupancy[i] : null;
+      if (list && list.length) {
+        var before = power;
+        var ordered = orderAlong(list, dir);
+        for (var k = 0; k < ordered.length; k++) {
+          var e = ordered[k];
+          if (stepDt > 0) {
+            e.damage += power * stepDt;
+            e.hitAt = nowTime;
+          }
+          power *= (1 - e.absorb);
+          if (power < B.MIN_POWER) { power = 0; break; }
+        }
+        if (power !== before) {
+          /* Step the rendered beam down at the far edge of this cell. */
+          var sx = R.grid.worldX(c) + DC[dir] * 0.5;
+          var sz = R.grid.worldZ(r) + DR[dir] * 0.5;
+          if (!emit(segX, segZ, sx, sz, dir, segC, segR, c, r, segPower, before, sourceId)) return;
+          segX = sx;
+          segZ = sz;
+          segC = c;
+          segR = r;
+          segPower = power;
+        }
+        if (power < B.MIN_POWER) return;
+      }
+
+      var piece = pieces.get(i);
+      if (piece && piece.inactiveUntil > nowTime) piece = null;
+
+      if (piece) {
+        var px = R.grid.worldX(c);
+        var pz = R.grid.worldZ(r);
+        if (!emit(segX, segZ, px, pz, dir, segC, segR, c, r, segPower, power, sourceId)) return;
+        if (piece.type === 'mirror') {
+          trace(c, r, R.grid.reflect(dir, piece.orient), power, depth + 1, sourceId, true);
+        } else if (piece.type === 'splitter') {
+          trace(c, r, dir, power * B.SPLIT_FACTOR, depth + 1, sourceId, true);
+          trace(c, r, R.grid.reflect(dir, piece.orient), power * B.SPLIT_FACTOR, depth + 1, sourceId, true);
+        } else if (piece.type === 'reflector') {
+          trace(c, r, R.grid.opposite(dir), power * B.REFLECT_FACTOR, depth + 1, sourceId, true);
+        }
+        /* A lamp absorbs whatever reaches it. */
+        return;
+      }
+
+      if (kind[i] === R.CORE) {
+        emit(segX, segZ, R.grid.worldX(c), R.grid.worldZ(r), dir, segC, segR, c, r, segPower, power, sourceId);
+        return;
+      }
+    }
+  }
+
+  /* ---------- entry points ---------- */
+
+  R.beam.corePower = function (level) {
+    var arr = B.CORE_POWER;
+    return arr[Math.min(Math.max(level, 1), arr.length) - 1];
+  };
+
+  R.beam.lampPower = function (level) {
+    return R.beam.corePower(level) * B.LAMP_FACTOR;
+  };
+
+  /*
+   * Solve every source into `result`. `occ` is an array of per-cell enemy lists
+   * or null; with a positive `dt` the enemies accumulate damage.
+   */
+  R.beam.solve = function (state, occ, dt, result) {
+    out = result;
+    occupancy = occ || null;
+    stepDt = dt || 0;
+    kind = state.grid.kind;
+    pieces = state.pieces;
+    nowTime = state.time;
+
+    out.segCount = 0;
+    out.totalPower = 0;
+    out.overflow = false;
+    out.lit.fill(0);
+
+    var corePower = R.beam.corePower(state.coreLevel);
+    var sourceId = 1;
+
+    visitGen++;
+    trace(R.MAP.core[0], R.MAP.core[1], R.N, corePower, 0, sourceId);
+
+    var lampPower = R.beam.lampPower(state.coreLevel);
+    var it = pieces.values();
+    var entry = it.next();
+    while (!entry.done) {
+      var p = entry.value;
+      if (p.type === 'lamp' && p.inactiveUntil <= nowTime) {
+        sourceId++;
+        visitGen++;
+        trace(p.c, p.r, p.dir, lampPower, 0, sourceId);
+      }
+      entry = it.next();
+    }
+
+    var litRoad = 0;
+    for (var i = 0; i < CELLS; i++) {
+      if (out.lit[i] > 0 && (kind[i] === R.ROAD || kind[i] === R.SPAWN)) litRoad++;
+    }
+    out.litRoadCount = litRoad;
+    out.version++;
+
+    out = null;
+    occupancy = null;
+    pieces = null;
+    kind = null;
+    return result;
+  };
+
+  /* Refresh the live beam without applying damage (used after any edit). */
+  R.beam.recompute = function (state) {
+    R.beam.solve(state, R.enemies ? R.enemies.occupancy(state) : null, 0, state.beam);
+    return state.beam;
+  };
+
+  /* ---------- placement helpers ---------- */
+
+  var scratchResult = null;
+
+  function scratch() {
+    if (!scratchResult) scratchResult = R.beam.makeResult();
+    return scratchResult;
+  }
+
+  /* Total beam power falling on road cells, ignoring enemies. */
+  R.beam.coverageScore = function (state) {
+    var res = R.beam.solve(state, null, 0, scratch());
+    var k = state.grid.kind;
+    var total = 0;
+    for (var i = 0; i < CELLS; i++) {
+      if (res.lit[i] > 0 && (k[i] === R.ROAD || k[i] === R.SPAWN)) total += res.lit[i];
+    }
+    return total;
+  };
+
+  R.beam.ORIENT_COUNT = { mirror: 2, splitter: 2, reflector: 1, lamp: 4 };
+
+  /*
+   * Pick the orientation that puts the most light on the road. Ties keep the
+   * lowest orientation, so the choice is deterministic.
+   */
+  R.beam.bestOrientation = function (state, type, c, r) {
+    var n = R.beam.ORIENT_COUNT[type] || 1;
+    if (n === 1) return 0;
+    var i = R.grid.idx(c, r);
+    var existing = state.pieces.get(i);
+    var probe = {
+      id: -1,
+      type: type,
+      c: c,
+      r: r,
+      orient: 0,
+      dir: R.N,
+      cost: 0,
+      placedAt: -1,
+      inactiveUntil: -1
+    };
+    state.pieces.set(i, probe);
+    var best = 0;
+    var bestScore = -1;
+    for (var o = 0; o < n; o++) {
+      if (type === 'lamp') probe.dir = o;
+      else probe.orient = o;
+      var score = R.beam.coverageScore(state);
+      if (score > bestScore + 1e-9) {
+        bestScore = score;
+        best = o;
+      }
+    }
+    if (existing) state.pieces.set(i, existing);
+    else state.pieces.delete(i);
+    return best;
+  };
+
+  /* Preview result for a hypothetical piece; used by the drag ghost. */
+  R.beam.preview = function (state, type, c, r, orient) {
+    var i = R.grid.idx(c, r);
+    var existing = state.pieces.get(i);
+    var probe = {
+      id: -1,
+      type: type,
+      c: c,
+      r: r,
+      orient: type === 'lamp' ? 0 : orient,
+      dir: type === 'lamp' ? orient : R.N,
+      cost: 0,
+      placedAt: -1,
+      inactiveUntil: -1
+    };
+    state.pieces.set(i, probe);
+    var res = R.beam.solve(state, null, 0, scratch());
+    if (existing) state.pieces.set(i, existing);
+    else state.pieces.delete(i);
+    return res;
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+/*
+   ==================================================================
+   07_pieces.js
+   ==================================================================
+*/
+/*
+ * Pieces: buying, placing, flipping and the gold rules around them. All of it
+ * is plain state manipulation; feedback is pushed onto state.events for the
+ * renderer, the HUD and the audio system to pick up.
+ */
+(function (global) {
+  'use strict';
+  var R = global.R || (global.R = {});
+  var B = R.BALANCE;
+
+  R.pieces = {};
+
+  R.pieces.cost = function (s, type) {
+    if (type === 'lamp') return B.PIECE_COST.lamp + B.LAMP_COST_STEP * s.lampsBought;
+    return B.PIECE_COST[type] || 0;
+  };
+
+  R.pieces.isUnlocked = function (s, type) {
+    return !!s.unlocked[type];
+  };
+
+  /*
+   * Why a placement would be refused, or null when it is allowed.
+   * 'locked' | 'gold' | 'occupied' | 'terrain'
+   */
+  R.pieces.placementProblem = function (s, type, c, r) {
+    if (!R.pieces.isUnlocked(s, type)) return 'locked';
+    if (!R.grid.inBounds(c, r)) return 'terrain';
+    var i = R.grid.idx(c, r);
+    if (s.grid.kind[i] !== R.EMPTY) return 'terrain';
+    if (s.pieces.has(i)) return 'occupied';
+    if (s.gold < R.pieces.cost(s, type)) return 'gold';
+    return null;
+  };
+
+  R.pieces.at = function (s, c, r) {
+    if (!R.grid.inBounds(c, r)) return null;
+    return s.pieces.get(R.grid.idx(c, r)) || null;
+  };
+
+  R.pieces.byId = function (s, id) {
+    var it = s.pieces.values();
+    var e = it.next();
+    while (!e.done) {
+      if (e.value.id === id) return e.value;
+      e = it.next();
+    }
+    return null;
+  };
+
+  /*
+   * Place a piece and pay for it. `orient` may be omitted, in which case the
+   * orientation that puts the most light on the road is chosen.
+   */
+  R.pieces.place = function (s, type, c, r, orient) {
+    var problem = R.pieces.placementProblem(s, type, c, r);
+    if (problem) {
+      R.emit(s, 'denied', { reason: problem, c: c, r: r, type: type, cost: R.pieces.cost(s, type) });
+      return null;
+    }
+
+    var cost = R.pieces.cost(s, type);
+    var chosen = orient;
+    if (chosen === undefined || chosen === null) chosen = R.beam.bestOrientation(s, type, c, r);
+
+    var piece = {
+      id: s.nextPieceId++,
+      type: type,
+      c: c,
+      r: r,
+      i: R.grid.idx(c, r),
+      orient: type === 'lamp' ? 0 : (chosen % 2),
+      dir: type === 'lamp' ? (chosen % 4) : R.N,
+      cost: cost,
+      placedAt: s.time,
+      inactiveUntil: -1
+    };
+
+    s.gold -= cost;
+    s.pieces.set(piece.i, piece);
+    if (type === 'lamp') s.lampsBought++;
+    s.ui.undo = { pieceId: piece.id, until: s.time + B.UNDO_WINDOW, refund: cost };
+
+    R.beam.recompute(s);
+    R.emit(s, 'place', { id: piece.id, type: type, c: c, r: r, cost: cost });
+    return piece;
+  };
+
+  /* Mirrors and splitters toggle diagonal; lamps turn a quarter clockwise. */
+  R.pieces.flip = function (s, c, r) {
+    var p = R.pieces.at(s, c, r);
+    if (!p) return false;
+    if (p.type === 'reflector') {
+      R.emit(s, 'denied', { reason: 'noflip', c: c, r: r });
+      return false;
+    }
+    if (p.type === 'lamp') p.dir = (p.dir + 1) % 4;
+    else p.orient = p.orient ? 0 : 1;
+    R.beam.recompute(s);
+    R.emit(s, 'flip', { id: p.id, type: p.type, c: c, r: r });
+    return true;
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+/*
+   ==================================================================
    08_render.js
    ==================================================================
 */
@@ -1317,6 +1776,29 @@ body.wide #sideNote { display: block; }
     g.lineTo(32, 22);
     g.lineTo(50, 40);
     g.stroke();
+    return new THREE.CanvasTexture(cv);
+  }
+
+  /* Soft-edged square so adjacent lit road cells merge into one band. */
+  function tileGlowTexture() {
+    var s = 64;
+    var cv = makeCanvas(s);
+    var g = cv.getContext('2d');
+    var img = g.createImageData(s, s);
+    for (var y = 0; y < s; y++) {
+      for (var x = 0; x < s; x++) {
+        var fx = Math.abs((x + 0.5) / s - 0.5) * 2;
+        var fy = Math.abs((y + 0.5) / s - 0.5) * 2;
+        var f = Math.max(fx, fy);
+        var a = f < 0.76 ? 1 : Math.max(0, 1 - (f - 0.76) / 0.24);
+        var o = (y * s + x) * 4;
+        img.data[o] = 255;
+        img.data[o + 1] = 255;
+        img.data[o + 2] = 255;
+        img.data[o + 3] = Math.round(a * a * 255);
+      }
+    }
+    g.putImageData(img, 0, 0);
     return new THREE.CanvasTexture(cv);
   }
 
@@ -1520,10 +2002,11 @@ body.wide #sideNote { display: block; }
     rd.tex.beam = beamTexture();
     rd.tex.chevron = chevronTexture();
     rd.tex.ring = ringTexture();
+    rd.tex.tileGlow = tileGlowTexture();
 
     buildLights();
     buildBoard(state);
-    if (rd.buildDynamic) rd.buildDynamic(state);
+    rd.buildDynamic();
 
     rd.scene = scene;
     rd.camera = camera;
@@ -1606,6 +2089,295 @@ body.wide #sideNote { display: block; }
     return { c: c, r: r, i: R.grid.idx(c, r) };
   };
 
+
+  /* ---------- dynamic layer: lit tiles, beams and pieces ---------- */
+
+  var CELLS = B.COLS * B.ROWS;
+  var MAX_PIECES = 48;
+  var LIT_Y = 0.035;
+  var BEAM_Y = 0.16;
+  var PIECE_Y = 0.0;
+
+  var dyn = {};
+  var scratchColor = null;
+  var hiddenMatrix = null;
+
+  /* Rotation that lays a plane flat and points its length along a direction. */
+  function dirAngle(dir) {
+    return -Math.atan2(R.grid.DC[dir], -R.grid.DR[dir]);
+  }
+
+  function additiveMaterial(map, color) {
+    return new THREE.MeshBasicMaterial({
+      map: map || null,
+      color: color,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+  }
+
+  function makeInstanced(geo, mat, count, order) {
+    var mesh = new THREE.InstancedMesh(geo, mat, count);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = order || 0;
+    mesh.count = count;
+    for (var i = 0; i < count; i++) {
+      mesh.setMatrixAt(i, hiddenMatrix);
+      mesh.setColorAt(i, scratchColor.setHex(0xffffff));
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    scene.add(mesh);
+    return mesh;
+  }
+
+  /* A writer that fills instances in order and hides the leftovers. */
+  function Filler(mesh) {
+    this.mesh = mesh;
+    this.n = 0;
+  }
+
+  Filler.prototype.push = function (x, y, z, rotZ, sx, sy, colorHex) {
+    var mesh = this.mesh;
+    if (this.n >= mesh.instanceMatrix.count) return;
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(-Math.PI / 2, 0, rotZ);
+    dummy.scale.set(sx, sy, 1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(this.n, dummy.matrix);
+    mesh.setColorAt(this.n, scratchColor.setHex(colorHex));
+    this.n++;
+  };
+
+  Filler.prototype.pushObject = function (obj, colorHex) {
+    var mesh = this.mesh;
+    if (this.n >= mesh.instanceMatrix.count) return;
+    obj.updateMatrix();
+    mesh.setMatrixAt(this.n, obj.matrix);
+    mesh.setColorAt(this.n, scratchColor.setHex(colorHex));
+    this.n++;
+  };
+
+  Filler.prototype.finish = function () {
+    var mesh = this.mesh;
+    for (var i = this.n; i < mesh.instanceMatrix.count; i++) mesh.setMatrixAt(i, hiddenMatrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.n = 0;
+  };
+
+  rd.buildDynamic = function () {
+    scratchColor = new THREE.Color();
+    hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+
+    var quad = new THREE.PlaneGeometry(1, 1);
+
+    dyn.litGlow = makeInstanced(quad, additiveMaterial(rd.tex.tileGlow, 0xffffff), CELLS, 1);
+    dyn.beamGlow = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 2);
+    dyn.beamCore = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 3);
+    dyn.bounce = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), 32, 4);
+
+    /* Mirror: a thin bright slab standing on the tile at 45 degrees. */
+    dyn.mirrorBody = makeInstanced(
+      new THREE.BoxGeometry(0.92, 0.26, 0.09),
+      new THREE.MeshLambertMaterial({ color: C.mirror, emissive: 0x24486b, emissiveIntensity: 0.6 }),
+      MAX_PIECES
+    );
+    dyn.mirrorEdge = makeInstanced(
+      new THREE.BoxGeometry(0.94, 0.05, 0.13),
+      additiveMaterial(null, C.mirrorEdge),
+      MAX_PIECES,
+      2
+    );
+
+    /* Splitter: a translucent violet cube with a bright internal diagonal. */
+    dyn.splitterBody = makeInstanced(
+      new THREE.BoxGeometry(0.72, 0.42, 0.72),
+      new THREE.MeshLambertMaterial({
+        color: C.splitter, emissive: 0x3b1d6b, emissiveIntensity: 0.8,
+        transparent: true, opacity: 0.62
+      }),
+      MAX_PIECES
+    );
+    dyn.splitterPlane = makeInstanced(
+      new THREE.BoxGeometry(0.98, 0.30, 0.05),
+      additiveMaterial(null, 0xdcc7ff),
+      MAX_PIECES,
+      2
+    );
+
+    /* Reflector: a golden cup that throws the light straight back. */
+    dyn.reflectorCup = makeInstanced(
+      new THREE.CylinderGeometry(0.38, 0.20, 0.34, 14, 1, true),
+      new THREE.MeshLambertMaterial({
+        color: C.reflector, emissive: 0x6b4a12, emissiveIntensity: 0.7, side: THREE.DoubleSide
+      }),
+      MAX_PIECES
+    );
+    dyn.reflectorDisc = makeInstanced(
+      new THREE.CircleGeometry(0.19, 14),
+      additiveMaterial(null, 0xffe6a8),
+      MAX_PIECES,
+      2
+    );
+
+    /* Lamp: a lantern with a notch showing which way it points. */
+    dyn.lampBody = makeInstanced(
+      new THREE.CylinderGeometry(0.22, 0.27, 0.40, 6),
+      new THREE.MeshLambertMaterial({ color: C.lamp, emissive: 0xa85f10, emissiveIntensity: 1.0 }),
+      MAX_PIECES
+    );
+    dyn.lampNotch = makeInstanced(
+      new THREE.BoxGeometry(0.14, 0.14, 0.30),
+      additiveMaterial(null, 0xffe9b0),
+      MAX_PIECES,
+      2
+    );
+
+    dyn.pieceObj = new THREE.Object3D();
+  };
+
+  /* Beam colour runs white to amber to red as the power falls. */
+  function beamColor(power, sourcePower) {
+    var f = sourcePower > 0 ? power / sourcePower : 0;
+    if (f >= 0.7) return C.beamHot;
+    if (f >= 0.35) return R.util.mixColor(C.beamMid, C.beamHot, (f - 0.35) / 0.35);
+    return R.util.mixColor(C.beamLow, C.beamMid, R.util.clamp(f / 0.35, 0, 1));
+  }
+
+  function beamWidth(power) {
+    return 0.10 + 0.30 * R.util.clamp(power / 35, 0, 1);
+  }
+
+  /*
+   * Only road cells glow. That is the number the player is pushing (LIT n/25),
+   * and it keeps light spilling over buildable tiles from washing the board out.
+   */
+  function drawLitTiles(state) {
+    var f = new Filler(dyn.litGlow);
+    var lit = state.beam.lit;
+    var kinds = state.grid.kind;
+    var srcPower = R.beam.corePower(state.coreLevel);
+    for (var i = 0; i < CELLS; i++) {
+      var p = lit[i];
+      if (p <= 0) continue;
+      if (kinds[i] !== R.ROAD && kinds[i] !== R.SPAWN) continue;
+      var c = i % B.COLS;
+      var r = (i - c) / B.COLS;
+      var strength = R.util.clamp(p / srcPower, 0.1, 1);
+      var hue = R.util.mixColor(C.beamLow, C.litGlow, R.util.clamp(strength * 1.6, 0, 1));
+      var col = R.util.mixColor(0x000000, hue, 0.16 + 0.40 * strength);
+      f.push(R.grid.worldX(c), LIT_Y, R.grid.worldZ(r), 0, 1.06, 1.06, col);
+    }
+    f.finish();
+  }
+
+  function drawBeams(state) {
+    var glow = new Filler(dyn.beamGlow);
+    var core = new Filler(dyn.beamCore);
+    var bounce = new Filler(dyn.bounce);
+    var srcPower = R.beam.corePower(state.coreLevel);
+    var segs = state.beam.segments;
+    var n = state.beam.segCount;
+
+    for (var i = 0; i < n; i++) {
+      var s = segs[i];
+      var len = Math.abs(s.x1 - s.x0) + Math.abs(s.z1 - s.z0);
+      if (len <= 0.001) continue;
+      var mx = (s.x0 + s.x1) / 2;
+      var mz = (s.z0 + s.z1) / 2;
+      var rot = dirAngle(s.dir);
+      var power = s.powerStart;
+      var col = beamColor(power, srcPower);
+      var w = beamWidth(power);
+      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, len + 0.04, R.util.mixColor(0x000000, col, 0.28));
+      core.push(mx, BEAM_Y + 0.005, mz, rot, w * 0.5, len + 0.04, R.util.mixColor(0x000000, col, 0.85));
+      if (s.bendAtStart) {
+        bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.5));
+      }
+    }
+    glow.finish();
+    core.finish();
+    bounce.finish();
+  }
+
+  var POP_TIME = 0.22;
+
+  function pieceScale(state, p) {
+    var age = state.time - p.placedAt;
+    var s = 1;
+    if (age >= 0 && age < POP_TIME) {
+      var t = age / POP_TIME;
+      s = 0.2 + 1.0 * R.util.easeOutBack(t);
+    }
+    if (p.inactiveUntil > state.time) s *= 0.72;
+    return s;
+  }
+
+  function drawPieces(state) {
+    var fills = {
+      mirrorBody: new Filler(dyn.mirrorBody),
+      mirrorEdge: new Filler(dyn.mirrorEdge),
+      splitterBody: new Filler(dyn.splitterBody),
+      splitterPlane: new Filler(dyn.splitterPlane),
+      reflectorCup: new Filler(dyn.reflectorCup),
+      reflectorDisc: new Filler(dyn.reflectorDisc),
+      lampBody: new Filler(dyn.lampBody),
+      lampNotch: new Filler(dyn.lampNotch)
+    };
+    var o = dyn.pieceObj;
+    var it = state.pieces.values();
+    var entry = it.next();
+    while (!entry.done) {
+      var p = entry.value;
+      var x = R.grid.worldX(p.c);
+      var z = R.grid.worldZ(p.r);
+      var sc = pieceScale(state, p);
+      var dim = p.inactiveUntil > state.time ? 0.45 : 1;
+      var diag = p.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
+
+      if (p.type === 'mirror') {
+        o.position.set(x, PIECE_Y + 0.13 * sc, z);
+        o.rotation.set(0, diag, 0);
+        o.scale.set(sc, sc, sc);
+        fills.mirrorBody.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.position.y = PIECE_Y + 0.26 * sc;
+        fills.mirrorEdge.pushObject(o, R.util.mixColor(0x000000, C.mirrorEdge, dim));
+      } else if (p.type === 'splitter') {
+        o.position.set(x, PIECE_Y + 0.21 * sc, z);
+        o.rotation.set(0, 0, 0);
+        o.scale.set(sc, sc, sc);
+        fills.splitterBody.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.rotation.set(0, diag, 0);
+        fills.splitterPlane.pushObject(o, R.util.mixColor(0x000000, 0xdcc7ff, dim));
+      } else if (p.type === 'reflector') {
+        o.position.set(x, PIECE_Y + 0.17 * sc, z);
+        o.rotation.set(0, 0, 0);
+        o.scale.set(sc, sc, sc);
+        fills.reflectorCup.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.position.y = PIECE_Y + 0.35 * sc;
+        o.rotation.set(-Math.PI / 2, 0, 0);
+        fills.reflectorDisc.pushObject(o, R.util.mixColor(0x000000, 0xffe6a8, dim));
+      } else if (p.type === 'lamp') {
+        o.position.set(x, PIECE_Y + 0.20 * sc, z);
+        o.rotation.set(0, 0, 0);
+        o.scale.set(sc, sc, sc);
+        fills.lampBody.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.position.set(x + R.grid.DC[p.dir] * 0.26 * sc, PIECE_Y + 0.22 * sc, z + R.grid.DR[p.dir] * 0.26 * sc);
+        fills.lampNotch.pushObject(o, R.util.mixColor(0x000000, 0xffe9b0, dim));
+      }
+      entry = it.next();
+    }
+    Object.keys(fills).forEach(function (k) { fills[k].finish(); });
+  }
+
+  rd.drawDynamic = function (state) {
+    drawLitTiles(state);
+    drawBeams(state);
+    drawPieces(state);
+  };
+
   /* ---------- frame ---------- */
 
   rd.draw = function (state, dtReal) {
@@ -1625,7 +2397,7 @@ body.wide #sideNote { display: block; }
       rd.portalRing.rotation.z -= dtReal * 0.5;
     }
 
-    if (rd.drawDynamic) rd.drawDynamic(state, dtReal);
+    rd.drawDynamic(state, dtReal);
 
     renderer.render(scene, camera);
   };
@@ -1639,6 +2411,284 @@ body.wide #sideNote { display: block; }
       textures: renderer.info.memory.textures,
       programs: renderer.info.programs ? renderer.info.programs.length : 0
     };
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+/*
+   ==================================================================
+   09_ui.js
+   ==================================================================
+*/
+/*
+ * The DOM layer: HUD numbers, the incoming strip, floating text over the board
+ * and (from later phases) the palette, action bar and overlays. Everything here
+ * reads state and reacts to the feedback events the simulation emits.
+ */
+(function (global) {
+  'use strict';
+  var R = global.R || (global.R = {});
+  var B = R.BALANCE;
+
+  var ui = {};
+  R.ui = ui;
+
+  var el = {};
+  var cache = {};
+  var floaters = [];
+  var FLOATER_POOL = 28;
+
+  function byId(id) {
+    return document.getElementById(id);
+  }
+
+  function setText(node, value) {
+    if (cache[node.__key] === value) return;
+    cache[node.__key] = value;
+    node.textContent = value;
+  }
+
+  function key(node, name) {
+    node.__key = name;
+    return node;
+  }
+
+  /* ---------- floating text ---------- */
+
+  function makeFloater() {
+    var node = document.createElement('div');
+    node.className = 'floater';
+    node.style.display = 'none';
+    el.overlay.appendChild(node);
+    return { node: node, life: 0, ttl: 0, x: 0, y: 0, vy: 0, active: false };
+  }
+
+  ui.floater = function (text, kind, x, y, opts) {
+    var f = null;
+    for (var i = 0; i < floaters.length; i++) {
+      if (!floaters[i].active) { f = floaters[i]; break; }
+    }
+    if (!f) return null;
+    f.active = true;
+    f.life = 0;
+    f.ttl = (opts && opts.ttl) || 0.9;
+    f.x = x;
+    f.y = y;
+    f.vy = (opts && opts.vy) || -46;
+    f.node.className = 'floater ' + (kind || 'info');
+    f.node.textContent = text;
+    f.node.style.display = 'block';
+    f.node.style.left = x + 'px';
+    f.node.style.top = y + 'px';
+    f.node.style.opacity = '1';
+    return f;
+  };
+
+  ui.floaterAtCell = function (text, kind, c, r, opts) {
+    var p = R.render.projectCell(c, r, 0.4);
+    if (!p) return null;
+    return ui.floater(text, kind, p.x, p.y, opts);
+  };
+
+  function stepFloaters(dt) {
+    for (var i = 0; i < floaters.length; i++) {
+      var f = floaters[i];
+      if (!f.active) continue;
+      f.life += dt;
+      if (f.life >= f.ttl) {
+        f.active = false;
+        f.node.style.display = 'none';
+        continue;
+      }
+      var t = f.life / f.ttl;
+      f.node.style.top = (f.y + f.vy * t) + 'px';
+      f.node.style.opacity = String(1 - t * t);
+    }
+  }
+
+  ui.clearFloaters = function () {
+    for (var i = 0; i < floaters.length; i++) {
+      floaters[i].active = false;
+      floaters[i].node.style.display = 'none';
+    }
+  };
+
+  /* ---------- one-shot CSS animations ---------- */
+
+  function pulse(node, cls) {
+    if (!node) return;
+    node.classList.remove(cls);
+    /* Reading offsetWidth restarts the animation. */
+    void node.offsetWidth;
+    node.classList.add(cls);
+  }
+
+  ui.bumpGold = function () { pulse(el.statGold, 'bump'); };
+  ui.shakeGold = function () { pulse(el.statGold, 'shake'); };
+  ui.shakeHp = function () { pulse(el.statHp, 'shake'); };
+  ui.pulseLit = function () { pulse(el.statLit, 'bump'); };
+
+  /* ---------- HUD ---------- */
+
+  ui.update = function (s) {
+    setText(el.hpVal, String(Math.max(0, s.coreHp)));
+    setText(el.goldVal, String(Math.floor(s.gold)));
+    setText(el.waveVal, s.endless ? String(s.wave) : String(s.wave));
+    setText(el.waveSub, s.endless ? ' ENDLESS' : '/12');
+    setText(el.litVal, String(s.beam.litRoadCount));
+    setText(el.litSub, '/' + s.roadCells);
+  };
+
+  /* ---------- events ---------- */
+
+  ui.handleEvents = function (s) {
+    for (var i = 0; i < s.events.length; i++) {
+      var e = s.events[i];
+      if (e.type === 'denied') {
+        if (e.reason === 'gold') {
+          ui.shakeGold();
+          ui.floaterAtCell('Need ' + e.cost, 'dmg', e.c, e.r);
+        } else if (e.reason === 'locked') {
+          ui.floaterAtCell('Locked', 'info', e.c, e.r);
+        }
+      } else if (e.type === 'place') {
+        ui.bumpGold();
+      }
+    }
+  };
+
+  /* ---------- lifecycle ---------- */
+
+  ui.init = function () {
+    el.overlay = byId('boardOverlay');
+    el.statHp = byId('statHp');
+    el.statGold = byId('statGold');
+    el.statWave = byId('statWave');
+    el.statLit = byId('statLit');
+    el.hpVal = key(el.statHp.querySelector('.val'), 'hpVal');
+    el.goldVal = key(el.statGold.querySelector('.val'), 'goldVal');
+    el.waveVal = key(el.statWave.querySelector('.val'), 'waveVal');
+    el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
+    el.litVal = key(el.statLit.querySelector('.val'), 'litVal');
+    el.litSub = key(el.statLit.querySelector('.sub'), 'litSub');
+    el.strip = byId('strip');
+    el.stripText = key(byId('stripText'), 'strip');
+
+    for (var i = 0; i < FLOATER_POOL; i++) floaters.push(makeFloater());
+    ui.el = el;
+  };
+
+  ui.frame = function (s, dtReal) {
+    stepFloaters(dtReal);
+    ui.handleEvents(s);
+    ui.update(s);
+  };
+
+  ui.reset = function () {
+    ui.clearFloaters();
+    cache = {};
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+/*
+   ==================================================================
+   10_input.js
+   ==================================================================
+*/
+/*
+ * Input. Pointer Events only, one active pointer at a time. A press on the
+ * board becomes a tap (place or select) or, once it moves far enough, a drag.
+ */
+(function (global) {
+  'use strict';
+  var R = global.R || (global.R = {});
+
+  var input = {};
+  R.input = input;
+
+  var DRAG_THRESHOLD = 10;
+
+  var active = null;
+
+  function boardCell(ev) {
+    return R.render.cellFromClient(ev.clientX, ev.clientY);
+  }
+
+  function boardAcceptsInput(s) {
+    return s.phase === 'building' || s.phase === 'wave';
+  }
+
+  function onPointerDown(ev) {
+    var s = R.state;
+    if (!s || active) return;
+    if (!boardAcceptsInput(s)) return;
+    var cell = boardCell(ev);
+    if (!cell) return;
+
+    ev.preventDefault();
+    active = {
+      id: ev.pointerId,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      cell: cell,
+      moved: false,
+      piece: R.pieces.at(s, cell.c, cell.r)
+    };
+  }
+
+  function onPointerMove(ev) {
+    if (!active || ev.pointerId !== active.id) return;
+    var dx = ev.clientX - active.startX;
+    var dy = ev.clientY - active.startY;
+    if (!active.moved && (dx * dx + dy * dy) > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+      active.moved = true;
+    }
+  }
+
+  function onPointerUp(ev) {
+    if (!active || ev.pointerId !== active.id) return;
+    var s = R.state;
+    var press = active;
+    active = null;
+    if (!s || !boardAcceptsInput(s)) return;
+
+    if (press.moved) return;
+
+    var cell = boardCell(ev) || press.cell;
+    if (cell.i !== press.cell.i) return;
+
+    if (press.piece) {
+      R.pieces.flip(s, cell.c, cell.r);
+    } else {
+      R.pieces.place(s, s.ui.selectedType, cell.c, cell.r);
+    }
+  }
+
+  function onPointerCancel(ev) {
+    if (active && ev.pointerId === active.id) active = null;
+  }
+
+  input.init = function () {
+    var board = document.getElementById('board');
+    board.addEventListener('pointerdown', onPointerDown);
+    global.addEventListener('pointermove', onPointerMove, { passive: true });
+    global.addEventListener('pointerup', onPointerUp);
+    global.addEventListener('pointercancel', onPointerCancel);
+
+    /* Stop the browser turning taps into zoom, scroll or text selection. */
+    document.addEventListener('gesturestart', function (ev) { ev.preventDefault(); });
+    document.addEventListener('dblclick', function (ev) { ev.preventDefault(); });
+    document.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+    document.addEventListener('touchmove', function (ev) {
+      if (ev.cancelable) ev.preventDefault();
+    }, { passive: false });
+  };
+
+  input.cancel = function () {
+    active = null;
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -1728,18 +2778,26 @@ body.wide #sideNote { display: block; }
   R.newRun = function (seed) {
     var s = R.resetState(seed === undefined ? (Date.now() & 0x7fffffff) : seed);
     R.state = s;
+    /* The board is live from the first frame; the title screen arrives in a later phase. */
+    s.phase = 'building';
+    R.beam.recompute(s);
+    if (R.ui.reset) R.ui.reset();
+    if (R.input.cancel) R.input.cancel();
+    accumulator = 0;
     return s;
   };
 
   /* ---------- simulation ---------- */
 
+  /*
+   * One fixed step, in the order the systems depend on each other:
+   * time, spawning, movement, light and damage, deaths and leaks, economy,
+   * phase transitions.
+   */
   R.simStep = function (s, dt) {
     s.time += dt;
+    R.beam.solve(s, null, dt, s.beam);
   };
-
-  function stepPhysics(s, dt) {
-    R.simStep(s, dt);
-  }
 
   /* ---------- main loop ---------- */
 
@@ -1757,7 +2815,7 @@ body.wide #sideNote { display: block; }
       accumulator += dtReal;
       var steps = 0;
       while (accumulator >= T.FIXED_STEP && steps < T.MAX_STEPS_PER_FRAME) {
-        for (var k = 0; k < s.speed; k++) stepPhysics(s, T.FIXED_STEP);
+        for (var k = 0; k < s.speed; k++) R.simStep(s, T.FIXED_STEP);
         accumulator -= T.FIXED_STEP;
         steps++;
       }
@@ -1766,7 +2824,9 @@ body.wide #sideNote { display: block; }
       accumulator = 0;
     }
 
+    R.ui.frame(s, dtReal);
     R.render.draw(s, dtReal);
+    if (R.debug) R.debug.frame(dtReal);
     s.events.length = 0;
   }
 
@@ -1811,21 +2871,21 @@ body.wide #sideNote { display: block; }
     R.loadMeta();
     var s = R.newRun();
 
+    R.ui.init();
     R.render.applyLayout();
     if (!R.render.init(s)) {
       R.fatal('This device cannot run WebGL.');
       return;
     }
     R.render.applyLayout();
+    R.input.init();
+    if (R.debug) R.debug.install();
 
     installFavicon();
 
     global.addEventListener('resize', queueLayout, { passive: true });
     global.addEventListener('orientationchange', queueLayout, { passive: true });
     document.addEventListener('visibilitychange', onVisibility);
-
-    /* The board is live from the first frame; the title screen arrives in a later phase. */
-    s.phase = 'building';
 
     if (!loopStarted) {
       loopStarted = true;
@@ -1840,6 +2900,151 @@ body.wide #sideNote { display: block; }
   } else {
     R.boot();
   }
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+/*
+   ==================================================================
+   99_debug.js
+   ==================================================================
+*/
+/*
+ * Development tools. This file is excluded from the release build; nothing
+ * else in the game references it. It is only activated when the page URL
+ * contains debug=1.
+ */
+(function (global) {
+  'use strict';
+  var R = global.R || (global.R = {});
+
+  /* debug=1 installs the automation API; debug=2 also shows the panel. */
+  function debugLevel() {
+    try {
+      var m = /(?:^|[?&])debug=(\d)(?:&|$)/.exec(global.location.search.slice(1));
+      return m ? Number(m[1]) : 0;
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  var level = debugLevel();
+  if (!level) return;
+
+  var panel = null;
+  var readout = null;
+  var frames = 0;
+  var fpsAcc = 0;
+  var fps = 0;
+
+  function api() {
+    return {
+      get state() { return R.state; },
+
+      place: function (type, c, r, orient) {
+        var p = R.pieces.place(R.state, type, c, r, orient);
+        return p ? p.id : null;
+      },
+
+      flip: function (c, r) {
+        return R.pieces.flip(R.state, c, r);
+      },
+
+      setGold: function (n) {
+        R.state.gold = n;
+        return n;
+      },
+
+      setSpeed: function (n) {
+        R.state.speed = n;
+        return n;
+      },
+
+      restart: function (seed) {
+        R.newRun(seed);
+        return R.state.rngSeed;
+      },
+
+      step: function (seconds) {
+        var s = R.state;
+        var dt = R.TIMING.FIXED_STEP;
+        var n = Math.round(seconds / dt);
+        for (var i = 0; i < n; i++) R.simStep(s, dt);
+        return s.time;
+      },
+
+      snapshot: function () {
+        var s = R.state;
+        var pieces = [];
+        var it = s.pieces.values();
+        var e = it.next();
+        while (!e.done) {
+          pieces.push({ type: e.value.type, c: e.value.c, r: e.value.r, orient: e.value.orient, dir: e.value.dir });
+          e = it.next();
+        }
+        pieces.sort(function (a, b) { return (a.r * 8 + a.c) - (b.r * 8 + b.c); });
+        return {
+          phase: s.phase,
+          wave: s.wave,
+          endless: s.endless,
+          countdown: Math.round(s.countdown * 100) / 100,
+          time: Math.round(s.time * 100) / 100,
+          gold: s.gold,
+          goldEarned: s.goldEarned,
+          coreHp: s.coreHp,
+          coreLevel: s.coreLevel,
+          score: R.computeScore(s),
+          lit: s.beam.litRoadCount,
+          segments: s.beam.segCount,
+          totalPower: Math.round(s.beam.totalPower * 100) / 100,
+          pieces: pieces,
+          enemies: s.enemies.length,
+          unlocked: JSON.parse(JSON.stringify(s.unlocked)),
+          leaksBy: JSON.parse(JSON.stringify(s.leaksBy)),
+          render: R.render.info()
+        };
+      }
+    };
+  }
+
+  function buildPanel() {
+    panel = document.createElement('div');
+    panel.id = 'debugPanel';
+    panel.style.cssText = [
+      'position:absolute', 'left:2px', 'top:2px', 'z-index:40',
+      'font:10px/1.35 monospace', 'color:#9fe', 'background:rgba(0,0,0,0.62)',
+      'padding:4px 6px', 'border-radius:4px', 'pointer-events:none',
+      'white-space:pre'
+    ].join(';');
+    readout = document.createElement('div');
+    panel.appendChild(readout);
+    document.getElementById('app').appendChild(panel);
+  }
+
+  function update(dtReal) {
+    if (!readout) return;
+    frames++;
+    fpsAcc += dtReal;
+    if (fpsAcc >= 0.5) {
+      fps = Math.round(frames / fpsAcc);
+      frames = 0;
+      fpsAcc = 0;
+    }
+    var s = R.state;
+    var info = R.render.info() || { calls: 0 };
+    readout.textContent =
+      'fps ' + fps + '  t ' + s.time.toFixed(1) + '  ' + s.phase +
+      '\nwave ' + s.wave + '  foes ' + s.enemies.length + '  seg ' + s.beam.segCount +
+      '\nlit ' + s.beam.litRoadCount + '  calls ' + info.calls + '  seed ' + s.rngSeed;
+  }
+
+  R.debug = {
+    install: function () {
+      global.__REFRACT = api();
+      if (level >= 2) buildPanel();
+    },
+    frame: update
+  };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 </body>

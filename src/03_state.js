@@ -81,13 +81,8 @@
       spawnCursor: 0,
       waveEnemiesTotal: 0,
       waveEnemiesLeft: 0,
-      beam: {
-        segments: [],
-        lit: new Float32Array(cells),
-        litRoadCount: 0,
-        totalPower: 0,
-        version: 0
-      },
+      /* The beam result object owns its own pooled segment records. */
+      beam: R.beam.makeResult(),
       leaksBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
       damageBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
       ui: {

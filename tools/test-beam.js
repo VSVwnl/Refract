@@ -12,7 +12,7 @@ const path = require('path');
 const vm = require('vm');
 
 const SRC = path.resolve(__dirname, '..', 'src');
-const HEADLESS_FILES = ['00_config.js', '01_util.js', '03_state.js', '04_grid.js', '05_beam.js'];
+const HEADLESS_FILES = ['00_config.js', '01_util.js', '03_state.js', '04_grid.js', '05_beam.js', '06_enemies.js', '07_pieces.js'];
 
 HEADLESS_FILES.forEach(function (f) {
   const p = path.join(SRC, f);

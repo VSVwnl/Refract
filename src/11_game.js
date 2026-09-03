@@ -77,18 +77,26 @@
   R.newRun = function (seed) {
     var s = R.resetState(seed === undefined ? (Date.now() & 0x7fffffff) : seed);
     R.state = s;
+    /* The board is live from the first frame; the title screen arrives in a later phase. */
+    s.phase = 'building';
+    R.beam.recompute(s);
+    if (R.ui.reset) R.ui.reset();
+    if (R.input.cancel) R.input.cancel();
+    accumulator = 0;
     return s;
   };
 
   /* ---------- simulation ---------- */
 
+  /*
+   * One fixed step, in the order the systems depend on each other:
+   * time, spawning, movement, light and damage, deaths and leaks, economy,
+   * phase transitions.
+   */
   R.simStep = function (s, dt) {
     s.time += dt;
+    R.beam.solve(s, null, dt, s.beam);
   };
-
-  function stepPhysics(s, dt) {
-    R.simStep(s, dt);
-  }
 
   /* ---------- main loop ---------- */
 
@@ -106,7 +114,7 @@
       accumulator += dtReal;
       var steps = 0;
       while (accumulator >= T.FIXED_STEP && steps < T.MAX_STEPS_PER_FRAME) {
-        for (var k = 0; k < s.speed; k++) stepPhysics(s, T.FIXED_STEP);
+        for (var k = 0; k < s.speed; k++) R.simStep(s, T.FIXED_STEP);
         accumulator -= T.FIXED_STEP;
         steps++;
       }
@@ -115,7 +123,9 @@
       accumulator = 0;
     }
 
+    R.ui.frame(s, dtReal);
     R.render.draw(s, dtReal);
+    if (R.debug) R.debug.frame(dtReal);
     s.events.length = 0;
   }
 
@@ -160,21 +170,21 @@
     R.loadMeta();
     var s = R.newRun();
 
+    R.ui.init();
     R.render.applyLayout();
     if (!R.render.init(s)) {
       R.fatal('This device cannot run WebGL.');
       return;
     }
     R.render.applyLayout();
+    R.input.init();
+    if (R.debug) R.debug.install();
 
     installFavicon();
 
     global.addEventListener('resize', queueLayout, { passive: true });
     global.addEventListener('orientationchange', queueLayout, { passive: true });
     document.addEventListener('visibilitychange', onVisibility);
-
-    /* The board is live from the first frame; the title screen arrives in a later phase. */
-    s.phase = 'building';
 
     if (!loopStarted) {
       loopStarted = true;

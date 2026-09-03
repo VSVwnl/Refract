@@ -84,6 +84,29 @@
     return new THREE.CanvasTexture(cv);
   }
 
+  /* Soft-edged square so adjacent lit road cells merge into one band. */
+  function tileGlowTexture() {
+    var s = 64;
+    var cv = makeCanvas(s);
+    var g = cv.getContext('2d');
+    var img = g.createImageData(s, s);
+    for (var y = 0; y < s; y++) {
+      for (var x = 0; x < s; x++) {
+        var fx = Math.abs((x + 0.5) / s - 0.5) * 2;
+        var fy = Math.abs((y + 0.5) / s - 0.5) * 2;
+        var f = Math.max(fx, fy);
+        var a = f < 0.76 ? 1 : Math.max(0, 1 - (f - 0.76) / 0.24);
+        var o = (y * s + x) * 4;
+        img.data[o] = 255;
+        img.data[o + 1] = 255;
+        img.data[o + 2] = 255;
+        img.data[o + 3] = Math.round(a * a * 255);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return new THREE.CanvasTexture(cv);
+  }
+
   function ringTexture() {
     var s = 128;
     var cv = makeCanvas(s);
@@ -284,10 +307,11 @@
     rd.tex.beam = beamTexture();
     rd.tex.chevron = chevronTexture();
     rd.tex.ring = ringTexture();
+    rd.tex.tileGlow = tileGlowTexture();
 
     buildLights();
     buildBoard(state);
-    if (rd.buildDynamic) rd.buildDynamic(state);
+    rd.buildDynamic();
 
     rd.scene = scene;
     rd.camera = camera;
@@ -370,6 +394,295 @@
     return { c: c, r: r, i: R.grid.idx(c, r) };
   };
 
+
+  /* ---------- dynamic layer: lit tiles, beams and pieces ---------- */
+
+  var CELLS = B.COLS * B.ROWS;
+  var MAX_PIECES = 48;
+  var LIT_Y = 0.035;
+  var BEAM_Y = 0.16;
+  var PIECE_Y = 0.0;
+
+  var dyn = {};
+  var scratchColor = null;
+  var hiddenMatrix = null;
+
+  /* Rotation that lays a plane flat and points its length along a direction. */
+  function dirAngle(dir) {
+    return -Math.atan2(R.grid.DC[dir], -R.grid.DR[dir]);
+  }
+
+  function additiveMaterial(map, color) {
+    return new THREE.MeshBasicMaterial({
+      map: map || null,
+      color: color,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+  }
+
+  function makeInstanced(geo, mat, count, order) {
+    var mesh = new THREE.InstancedMesh(geo, mat, count);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = order || 0;
+    mesh.count = count;
+    for (var i = 0; i < count; i++) {
+      mesh.setMatrixAt(i, hiddenMatrix);
+      mesh.setColorAt(i, scratchColor.setHex(0xffffff));
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    scene.add(mesh);
+    return mesh;
+  }
+
+  /* A writer that fills instances in order and hides the leftovers. */
+  function Filler(mesh) {
+    this.mesh = mesh;
+    this.n = 0;
+  }
+
+  Filler.prototype.push = function (x, y, z, rotZ, sx, sy, colorHex) {
+    var mesh = this.mesh;
+    if (this.n >= mesh.instanceMatrix.count) return;
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(-Math.PI / 2, 0, rotZ);
+    dummy.scale.set(sx, sy, 1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(this.n, dummy.matrix);
+    mesh.setColorAt(this.n, scratchColor.setHex(colorHex));
+    this.n++;
+  };
+
+  Filler.prototype.pushObject = function (obj, colorHex) {
+    var mesh = this.mesh;
+    if (this.n >= mesh.instanceMatrix.count) return;
+    obj.updateMatrix();
+    mesh.setMatrixAt(this.n, obj.matrix);
+    mesh.setColorAt(this.n, scratchColor.setHex(colorHex));
+    this.n++;
+  };
+
+  Filler.prototype.finish = function () {
+    var mesh = this.mesh;
+    for (var i = this.n; i < mesh.instanceMatrix.count; i++) mesh.setMatrixAt(i, hiddenMatrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.n = 0;
+  };
+
+  rd.buildDynamic = function () {
+    scratchColor = new THREE.Color();
+    hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+
+    var quad = new THREE.PlaneGeometry(1, 1);
+
+    dyn.litGlow = makeInstanced(quad, additiveMaterial(rd.tex.tileGlow, 0xffffff), CELLS, 1);
+    dyn.beamGlow = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 2);
+    dyn.beamCore = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 3);
+    dyn.bounce = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), 32, 4);
+
+    /* Mirror: a thin bright slab standing on the tile at 45 degrees. */
+    dyn.mirrorBody = makeInstanced(
+      new THREE.BoxGeometry(0.92, 0.26, 0.09),
+      new THREE.MeshLambertMaterial({ color: C.mirror, emissive: 0x24486b, emissiveIntensity: 0.6 }),
+      MAX_PIECES
+    );
+    dyn.mirrorEdge = makeInstanced(
+      new THREE.BoxGeometry(0.94, 0.05, 0.13),
+      additiveMaterial(null, C.mirrorEdge),
+      MAX_PIECES,
+      2
+    );
+
+    /* Splitter: a translucent violet cube with a bright internal diagonal. */
+    dyn.splitterBody = makeInstanced(
+      new THREE.BoxGeometry(0.72, 0.42, 0.72),
+      new THREE.MeshLambertMaterial({
+        color: C.splitter, emissive: 0x3b1d6b, emissiveIntensity: 0.8,
+        transparent: true, opacity: 0.62
+      }),
+      MAX_PIECES
+    );
+    dyn.splitterPlane = makeInstanced(
+      new THREE.BoxGeometry(0.98, 0.30, 0.05),
+      additiveMaterial(null, 0xdcc7ff),
+      MAX_PIECES,
+      2
+    );
+
+    /* Reflector: a golden cup that throws the light straight back. */
+    dyn.reflectorCup = makeInstanced(
+      new THREE.CylinderGeometry(0.38, 0.20, 0.34, 14, 1, true),
+      new THREE.MeshLambertMaterial({
+        color: C.reflector, emissive: 0x6b4a12, emissiveIntensity: 0.7, side: THREE.DoubleSide
+      }),
+      MAX_PIECES
+    );
+    dyn.reflectorDisc = makeInstanced(
+      new THREE.CircleGeometry(0.19, 14),
+      additiveMaterial(null, 0xffe6a8),
+      MAX_PIECES,
+      2
+    );
+
+    /* Lamp: a lantern with a notch showing which way it points. */
+    dyn.lampBody = makeInstanced(
+      new THREE.CylinderGeometry(0.22, 0.27, 0.40, 6),
+      new THREE.MeshLambertMaterial({ color: C.lamp, emissive: 0xa85f10, emissiveIntensity: 1.0 }),
+      MAX_PIECES
+    );
+    dyn.lampNotch = makeInstanced(
+      new THREE.BoxGeometry(0.14, 0.14, 0.30),
+      additiveMaterial(null, 0xffe9b0),
+      MAX_PIECES,
+      2
+    );
+
+    dyn.pieceObj = new THREE.Object3D();
+  };
+
+  /* Beam colour runs white to amber to red as the power falls. */
+  function beamColor(power, sourcePower) {
+    var f = sourcePower > 0 ? power / sourcePower : 0;
+    if (f >= 0.7) return C.beamHot;
+    if (f >= 0.35) return R.util.mixColor(C.beamMid, C.beamHot, (f - 0.35) / 0.35);
+    return R.util.mixColor(C.beamLow, C.beamMid, R.util.clamp(f / 0.35, 0, 1));
+  }
+
+  function beamWidth(power) {
+    return 0.10 + 0.30 * R.util.clamp(power / 35, 0, 1);
+  }
+
+  /*
+   * Only road cells glow. That is the number the player is pushing (LIT n/25),
+   * and it keeps light spilling over buildable tiles from washing the board out.
+   */
+  function drawLitTiles(state) {
+    var f = new Filler(dyn.litGlow);
+    var lit = state.beam.lit;
+    var kinds = state.grid.kind;
+    var srcPower = R.beam.corePower(state.coreLevel);
+    for (var i = 0; i < CELLS; i++) {
+      var p = lit[i];
+      if (p <= 0) continue;
+      if (kinds[i] !== R.ROAD && kinds[i] !== R.SPAWN) continue;
+      var c = i % B.COLS;
+      var r = (i - c) / B.COLS;
+      var strength = R.util.clamp(p / srcPower, 0.1, 1);
+      var hue = R.util.mixColor(C.beamLow, C.litGlow, R.util.clamp(strength * 1.6, 0, 1));
+      var col = R.util.mixColor(0x000000, hue, 0.16 + 0.40 * strength);
+      f.push(R.grid.worldX(c), LIT_Y, R.grid.worldZ(r), 0, 1.06, 1.06, col);
+    }
+    f.finish();
+  }
+
+  function drawBeams(state) {
+    var glow = new Filler(dyn.beamGlow);
+    var core = new Filler(dyn.beamCore);
+    var bounce = new Filler(dyn.bounce);
+    var srcPower = R.beam.corePower(state.coreLevel);
+    var segs = state.beam.segments;
+    var n = state.beam.segCount;
+
+    for (var i = 0; i < n; i++) {
+      var s = segs[i];
+      var len = Math.abs(s.x1 - s.x0) + Math.abs(s.z1 - s.z0);
+      if (len <= 0.001) continue;
+      var mx = (s.x0 + s.x1) / 2;
+      var mz = (s.z0 + s.z1) / 2;
+      var rot = dirAngle(s.dir);
+      var power = s.powerStart;
+      var col = beamColor(power, srcPower);
+      var w = beamWidth(power);
+      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, len + 0.04, R.util.mixColor(0x000000, col, 0.28));
+      core.push(mx, BEAM_Y + 0.005, mz, rot, w * 0.5, len + 0.04, R.util.mixColor(0x000000, col, 0.85));
+      if (s.bendAtStart) {
+        bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.5));
+      }
+    }
+    glow.finish();
+    core.finish();
+    bounce.finish();
+  }
+
+  var POP_TIME = 0.22;
+
+  function pieceScale(state, p) {
+    var age = state.time - p.placedAt;
+    var s = 1;
+    if (age >= 0 && age < POP_TIME) {
+      var t = age / POP_TIME;
+      s = 0.2 + 1.0 * R.util.easeOutBack(t);
+    }
+    if (p.inactiveUntil > state.time) s *= 0.72;
+    return s;
+  }
+
+  function drawPieces(state) {
+    var fills = {
+      mirrorBody: new Filler(dyn.mirrorBody),
+      mirrorEdge: new Filler(dyn.mirrorEdge),
+      splitterBody: new Filler(dyn.splitterBody),
+      splitterPlane: new Filler(dyn.splitterPlane),
+      reflectorCup: new Filler(dyn.reflectorCup),
+      reflectorDisc: new Filler(dyn.reflectorDisc),
+      lampBody: new Filler(dyn.lampBody),
+      lampNotch: new Filler(dyn.lampNotch)
+    };
+    var o = dyn.pieceObj;
+    var it = state.pieces.values();
+    var entry = it.next();
+    while (!entry.done) {
+      var p = entry.value;
+      var x = R.grid.worldX(p.c);
+      var z = R.grid.worldZ(p.r);
+      var sc = pieceScale(state, p);
+      var dim = p.inactiveUntil > state.time ? 0.45 : 1;
+      var diag = p.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
+
+      if (p.type === 'mirror') {
+        o.position.set(x, PIECE_Y + 0.13 * sc, z);
+        o.rotation.set(0, diag, 0);
+        o.scale.set(sc, sc, sc);
+        fills.mirrorBody.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.position.y = PIECE_Y + 0.26 * sc;
+        fills.mirrorEdge.pushObject(o, R.util.mixColor(0x000000, C.mirrorEdge, dim));
+      } else if (p.type === 'splitter') {
+        o.position.set(x, PIECE_Y + 0.21 * sc, z);
+        o.rotation.set(0, 0, 0);
+        o.scale.set(sc, sc, sc);
+        fills.splitterBody.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.rotation.set(0, diag, 0);
+        fills.splitterPlane.pushObject(o, R.util.mixColor(0x000000, 0xdcc7ff, dim));
+      } else if (p.type === 'reflector') {
+        o.position.set(x, PIECE_Y + 0.17 * sc, z);
+        o.rotation.set(0, 0, 0);
+        o.scale.set(sc, sc, sc);
+        fills.reflectorCup.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.position.y = PIECE_Y + 0.35 * sc;
+        o.rotation.set(-Math.PI / 2, 0, 0);
+        fills.reflectorDisc.pushObject(o, R.util.mixColor(0x000000, 0xffe6a8, dim));
+      } else if (p.type === 'lamp') {
+        o.position.set(x, PIECE_Y + 0.20 * sc, z);
+        o.rotation.set(0, 0, 0);
+        o.scale.set(sc, sc, sc);
+        fills.lampBody.pushObject(o, R.util.mixColor(0x101820, 0xffffff, dim));
+        o.position.set(x + R.grid.DC[p.dir] * 0.26 * sc, PIECE_Y + 0.22 * sc, z + R.grid.DR[p.dir] * 0.26 * sc);
+        fills.lampNotch.pushObject(o, R.util.mixColor(0x000000, 0xffe9b0, dim));
+      }
+      entry = it.next();
+    }
+    Object.keys(fills).forEach(function (k) { fills[k].finish(); });
+  }
+
+  rd.drawDynamic = function (state) {
+    drawLitTiles(state);
+    drawBeams(state);
+    drawPieces(state);
+  };
+
   /* ---------- frame ---------- */
 
   rd.draw = function (state, dtReal) {
@@ -389,7 +702,7 @@
       rd.portalRing.rotation.z -= dtReal * 0.5;
     }
 
-    if (rd.drawDynamic) rd.drawDynamic(state, dtReal);
+    rd.drawDynamic(state, dtReal);
 
     renderer.render(scene, camera);
   };

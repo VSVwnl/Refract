@@ -157,7 +157,7 @@ async function main() {
 
   const width = Number(arg('w', 390));
   const height = Number(arg('h', 844));
-  const url = arg('url', 'http://localhost:8080/');
+  const url = arg('url', 'http://localhost:8080/?debug=1');
   const dsf = Number(arg('dsf', 3));
 
   const browser = await chromium.launch({

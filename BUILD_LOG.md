@@ -111,3 +111,45 @@ is a self-contained chunk of work with its own testing pass.
 **Result:** `node tools/test-beam.js` passes 6 tests. `node tools/build.js && node tools/check.js` passes on the release build (48,632 bytes, 1,847 lines, longest line 137 characters). The game serves at `http://localhost:8080/` and draws the full board, road, chevrons, spawn portal and core in a fixed portrait column at every target viewport.
 
 **Next step:** Phase 1 — the beam solver, mirror placement and flipping.
+
+
+### Session 1 — 2026-09-03 — Phase 1: bend the beam
+
+**Goal:** The core beam renders and a tap places a mirror that bends it, with flipping, gold cost and the LIT counter.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 1, including the full solver (splitter, reflector and lamp branches) and its unit tests, even though only mirrors are placeable.
+
+**Tools:** Claude Code with the Claude Opus model; Node unit tests; Playwright mobile-emulation browser tests.
+
+**Work completed:**
+
+- `src/05_beam.js`: the solver from spec 12.5. Per-source `(cell, direction)` visit stamps in a reused `Int32Array`, depth cap 48, segment cap 128, mirror/splitter/reflector/lamp branches, core and lamp sources, per-cell lit power, road-cell counting and total power. Enemies in a cell are ordered along the beam's direction of travel before they absorb, which is what makes beam direction matter.
+- Two refinements over the pseudo-code, both deliberate: (a) a run of beam is split into an extra render segment wherever an enemy drops its power, so the dimming past each enemy is visible; (b) segments carry world-space endpoints as well as cell coordinates, so the beam can start at a source's centre, step down at a cell boundary and stop exactly at a piece.
+- `src/07_pieces.js`: cost (including the lamp step), unlock and placement checks, `place` with smart orientation, `flip`. All feedback goes through `state.events`.
+- `src/08_render.js` dynamic layer: instanced pools for lit road tiles, beam glow, beam core line, bounce sparks and all four piece types (8 instanced meshes, so draw calls do not grow with piece count). Beam width and colour follow power (white to amber to red); the lit glow is drawn only on road cells.
+- `src/09_ui.js`: HUD numbers with change caching, a pooled floating-text system over the board, and counter bump/shake animations.
+- `src/10_input.js`: Pointer Events on the board, one active pointer, 10 px drag threshold, raycast to a cell; tap places or flips. Double-tap zoom, context menu and touch scrolling are suppressed.
+- `src/99_debug.js`: `window.__REFRACT` with `state`, `place`, `flip`, `setGold`, `setSpeed`, `restart`, `step` and `snapshot`. `debug=1` installs the API only, `debug=2` also shows the on-screen panel, which keeps test screenshots clean.
+- `tools/test-beam-solver.js`: 20 solver tests covering the reflection table, the documented LIT numbers, gold rules, invalid placements, a mirror ring, splitter branch power, the reflector return pass reaching the core, two facing reflectors producing exactly one return, lamp power and absorption, core levels, enemy ordering (across cells and inside one cell), beam death below minimum power, the render split at an absorber, the segment cap under a full board of splitters, and determinism.
+
+**Browser testing:** `node tools/qa.js beam` at 390x844, 360x800 and 430x932 (mobile emulation, real touch taps). 22 checks each, all passing: default beam LIT 1/25 and HUD reading `LIT 1/25` and 40 gold; tap (7,3) gives LIT 7/25, costs 20 gold and picks orientation 1; tapping it again flips it and LIT falls to 1; fresh board plus (7,6) gives LIT 6/25; the three-mirror chain (7,3)/(0,3)/(0,10) gives LIT 12/25 with orientations [1,0,1] and 60 gold spent; road, core and spawn tiles refuse a piece; twenty rapid taps on one tile buy exactly one mirror; with 15 gold a tap changes nothing and floats "Need 20"; resizing to 430x932 mid-state keeps the beam and the pieces; 20 draw calls. Screenshots: `shots/beam-390x844-a-default.png` … `-g-resized.png`. Network: two requests. Console: no messages from our code.
+
+**Problems found:**
+
+1. `resetState` built a plain beam object without the pooled segment records, so the first solve threw.
+2. `__REFRACT.restart()` left the phase at `title`, after which the board ignored taps; three checks failed until this was traced.
+3. First render of the beam was badly blown out: a full-cell radial glow on every lit cell (including buildable tiles) plus a wide additive beam turned the board into a white tube, and bounce sparks were being drawn at every power step rather than at real bends.
+
+**Fixes:**
+
+1. `resetState` now calls `R.beam.makeResult()`.
+2. `R.newRun` sets the phase to `building` (the title screen replaces this in Phase 3), so restart behaves identically to a fresh load.
+3. Visual pass: lit glow restricted to road cells, drawn with a new soft-square texture at 1.06 cells so neighbours merge into a band, warm amber tinted by power; beam glow width multiplier 2.1 to 1.7 and its additive intensity 0.5 to 0.28; core line 0.55 to 0.5 width at 0.85 intensity; a `bendAtStart` flag on segments so bounce sparks appear only where light actually turns.
+
+**Decisions locked:** No changes to Part 1. Added: the debug build has two levels (`debug=1` API only, `debug=2` API plus panel).
+
+**Balance changes:** none.
+
+**Result:** 26 Node tests pass. `node tools/build.js && node tools/check.js` passes on the release build (79.3 kB, 10 source files). The game is playable to the extent Phase 1 defines: the beam is live at load, taps bend it, LIT and gold respond, and the whole board reads clearly at phone size.
+
+**Next step:** Phase 2 — enemies, waves 1 to 3, damage, gold and core HP.
