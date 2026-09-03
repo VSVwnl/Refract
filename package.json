@@ -1,0 +1,26 @@
+{
+  "name": "meta",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VSVwnl/Meta.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/VSVwnl/Meta/issues"
+  },
+  "homepage": "https://github.com/VSVwnl/Meta#readme",
+  "devDependencies": {
+    "playwright": "^1.47.2"
+  }
+}

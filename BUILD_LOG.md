@@ -40,6 +40,9 @@ Competition constraints (verified 2026-09-03 against the official pages):
 
 ## Part 2 — Session entries
 
+The build work is recorded one entry per implementation phase, since each phase
+is a self-contained chunk of work with its own testing pass.
+
 ### Session 0 — 2026-09-03 — Research, concept selection and specification (no game code)
 
 **Goal:** Choose the game and write the specification the build sessions will follow.
@@ -59,3 +62,52 @@ Competition constraints (verified 2026-09-03 against the official pages):
 **Result:** Repository contains only planning files. No gameplay code.
 
 **Next step:** Phase 0 of `MASTER_SPEC.md` section 33 — compliant project foundation.
+
+
+### Session 1 — 2026-09-03 — Phase 0: compliant project foundation
+
+**Goal:** A blank, compliant, portrait Three.js scene that builds into a single `index.html`, serves locally, and passes the compliance checker.
+
+**Direction:** Execute `MASTER_SPEC.md` section 33 Phase 0, then test in a browser at portrait mobile viewports before moving on.
+
+**Tools:** Claude Code with the Claude Opus model. Browser testing with Playwright (Chromium, mobile emulation) driven by `tools/qa.js`, plus interactive inspection in a live Chrome tab.
+
+**Spec audit before coding.** Read the whole specification and checked it for internal conflicts:
+
+- Section 14 ("Splitter after wave 1, Reflector after wave 3, Lamp after wave 6") and the `UNLOCK_WAVE: { splitter: 2, reflector: 4, lamp: 7 }` table describe the same schedule from different ends. No conflict; the table is authoritative.
+- Verified the reflection table in 12.4 against vector reflection in screen space (y down): `/` maps (dx,dy) to (-dy,-dx) and `\` maps (dx,dy) to (dy,dx). All eight documented cases are correct.
+- Verified the Phase 1 expected LIT numbers by hand against the map: default beam 1, mirror at (7,3) 7, mirror at (7,6) 6, three-mirror chain 12. All consistent with the fixed map.
+- Verified the map ASCII, the 25 road cells and the 26-entry path.
+- One implementation refinement recorded here rather than silently: the beam solver will split a run into extra render segments wherever an enemy absorbs power, so the dimming past each enemy is visible. The segment record keeps the fields the spec lists; `MAX_SEGMENTS` still caps total output.
+
+**Work completed:**
+
+- `vendor/three.min.js` — Three.js r149 UMD, taken from the published `three@0.149.0` package, unmodified (608,081 bytes, sha256 `8a5f7249…`), plus `vendor/LICENSE-three.txt`. `tools/check.js` pins the hash.
+- `tools/build.js` (inlines `src/styles.css` and every `src/*.js` in filename order into `index.html`, `--dev` adds `99_debug.js`), `tools/serve.js` (dev server on 8080, rebuilds on request), `tools/static.js` (serves an unpacked release), `tools/check.js` (compliance), `tools/test-beam.js` (Node unit tests), `tools/qa.js` + `tools/qa-scenarios.js` (Playwright driver: mobile emulation, touch input, console/network capture, screenshots).
+- `src/template.html` (portrait column shell: HUD row, incoming strip, board, action row, palette, overlay root), `src/styles.css`.
+- `src/00_config.js` (BALANCE exactly as specified, map, colours, view and layout constants), `src/01_util.js` (mulberry32, math, easing, pool, guarded storage), `src/03_state.js` (`resetState`, board and path construction, score), `src/04_grid.js` (cell maths, reflection table, world mapping), `src/08_render.js` (renderer, tilted orthographic camera, instanced board tiles, road ribbon, direction chevrons, spawn portal, Lumen Core, layout and raycasting), `src/11_game.js` (boot, fixed-step loop, visibility pause, runtime-drawn favicon).
+- Camera framing: orthographic, tilted 25 degrees. The frustum is fitted to the board rectangle in the tilted view (height scaled by cos 25) while the canvas is sized to the same cell count, so board cells project as exact squares and only piece height is foreshortened. Margins are expressed in cells so the camera never clips a piece at the top edge.
+
+**Browser testing:** `node tools/qa.js layout` at 390x844, 360x800, 393x852, 430x932, 360x640 (all `deviceScaleFactor` 3, `isMobile`, `hasTouch`), and 1280x800 desktop. Screenshots `shots/layout-<size>-board.png` reviewed. Measured: no horizontal or vertical overflow at any size; board inside the column; cell sizes 46.65 / 43.06 / 47.01 / 51.44 / 33.81 / 44.87 px; 8 draw calls; load 0.58–0.73 s. Desktop shows the 400 px portrait column centred with the "Best played in portrait" caption. Network: exactly `GET /` and `GET /vendor/three.min.js` — the runtime-drawn favicon removes the browser's `favicon.ico` request. Console: no messages from our code (headless Chromium emits GPU "ReadPixels" driver warnings during screenshots; `tools/qa.js` classifies those as browser noise and reports them separately).
+
+**Problems found:**
+
+1. `tools/check.js` required at least ten banner comments, which fails while the source tree is still growing.
+2. The road ribbon and the direction chevrons read too dimly in the first screenshot.
+3. The Lumen Core's floor glow was clipped by the right edge of the board frustum.
+4. A page opened in a background Chrome tab reports `document.hidden` true and never runs `requestAnimationFrame`, so interactive inspection in a live tab cannot rely on real time passing.
+
+**Fixes:**
+
+1. The banner check now compares the banner count with the number of inlined `<script>` blocks.
+2. Chevron colour `#ffa53a` to `#ffb45a` and opacity 0.30 to 0.36.
+3. `VIEW.MARGIN_X` 0.12 to 0.18 and the core haze plane 2.2 to 1.9 units.
+4. Test plan adjusted: Playwright (where the page is always visible) drives timing-dependent tests; the live Chrome tab is used for visual inspection and real touch, with the simulation advanced explicitly through the debug API when needed.
+
+**Decisions locked:** No changes to Part 1. Added tooling decisions: `tools/qa.js` is the browser test driver and lives outside the zip; the Three.js hash is pinned in the compliance checker; the favicon is drawn to a canvas at runtime so the build makes no extra request.
+
+**Balance changes:** none.
+
+**Result:** `node tools/test-beam.js` passes 6 tests. `node tools/build.js && node tools/check.js` passes on the release build (48,632 bytes, 1,847 lines, longest line 137 characters). The game serves at `http://localhost:8080/` and draws the full board, road, chevrons, spawn portal and core in a fixed portrait column at every target viewport.
+
+**Next step:** Phase 1 — the beam solver, mirror placement and flipping.

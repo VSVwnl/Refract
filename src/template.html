@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>REFRACT</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f1e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- BUILD:MANIFEST -->
+<!-- BUILD:CSS -->
+</head>
+<body>
+
+<div id="sideNote" aria-hidden="true">Best played in portrait</div>
+
+<div id="stage">
+  <div id="app">
+
+    <div id="hud">
+      <div id="stats">
+        <div class="stat" id="statHp"><span class="ico hp">&#9829;</span><span class="val">20</span><span class="sub">/20</span></div>
+        <div class="stat" id="statGold"><span class="ico gold">&#9670;</span><span class="val">40</span></div>
+        <div class="stat" id="statWave"><span class="lbl">WAVE</span><span class="val">0</span><span class="sub">/12</span></div>
+        <div class="stat" id="statLit"><span class="lbl">LIT</span><span class="val">0</span><span class="sub">/25</span></div>
+      </div>
+      <div id="hudButtons">
+        <button type="button" class="iconbtn" id="btnPause" aria-label="Pause"><i class="glyph-pause"></i></button>
+        <button type="button" class="iconbtn" id="btnSpeed" aria-label="Game speed">1&#215;</button>
+        <button type="button" class="iconbtn" id="btnHelp" aria-label="How to play">?</button>
+        <button type="button" class="iconbtn" id="btnMute" aria-label="Sound"><i class="glyph-sound">&#9834;</i></button>
+      </div>
+    </div>
+
+    <div id="strip"><span id="stripText">&nbsp;</span></div>
+
+    <div id="boardWrap">
+      <div id="board">
+        <canvas id="gl"></canvas>
+        <div id="boardOverlay"></div>
+      </div>
+    </div>
+
+    <div id="actionRow">
+      <button type="button" class="actbtn" id="btnCore"><span class="a1">CORE &#9650;</span><span class="a2">Lv1</span></button>
+      <button type="button" class="actbtn primary" id="btnNext"><span class="a1">NEXT WAVE</span><span class="a2">&#9654;</span></button>
+    </div>
+
+    <div id="palette"></div>
+
+    <div id="overlayRoot"></div>
+  </div>
+</div>
+
+<div id="fatal" hidden></div>
+
+<script src="vendor/three.min.js"></script>
+<!-- BUILD:JS -->
+</body>
+</html>
