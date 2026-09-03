@@ -68,6 +68,12 @@
     return ui.floater(text, kind, p.x, p.y, opts);
   };
 
+  ui.floaterAtWorld = function (text, kind, x, z, opts) {
+    var p = R.render.project(x, 0.4, z);
+    if (!p) return null;
+    return ui.floater(text, kind, p.x, p.y, opts);
+  };
+
   function stepFloaters(dt) {
     for (var i = 0; i < floaters.length; i++) {
       var f = floaters[i];
@@ -106,6 +112,42 @@
   ui.shakeHp = function () { pulse(el.statHp, 'shake'); };
   ui.pulseLit = function () { pulse(el.statLit, 'bump'); };
 
+  /* ---------- incoming strip ---------- */
+
+  var stripNotice = '';
+  var stripNoticeUntil = 0;
+  var realTime = 0;
+
+  function pips(comp) {
+    var html = '';
+    for (var i = 0; i < comp.length; i++) {
+      var g = comp[i];
+      var big = g.type === 'bruteking' || g.type === 'umbra';
+      html += '<span class="pip ' + g.type + (big ? ' big' : '') + '"></span>';
+      html += '<span class="' + (big ? 'warn' : '') + '">' + g.count + '</span> ';
+    }
+    return html;
+  }
+
+  ui.notice = function (text, seconds) {
+    stripNotice = text;
+    stripNoticeUntil = realTime + (seconds || 2.4);
+    el.strip.classList.remove('flash');
+    void el.strip.offsetWidth;
+    el.strip.classList.add('flash');
+  };
+
+  function stripHtml(s) {
+    if (stripNotice && realTime < stripNoticeUntil) return '<span class="warn">' + stripNotice + '</span>';
+    if (s.phase === 'wave') {
+      return '<span class="em">WAVE ' + s.wave + '</span> &middot; ' +
+        R.enemies.remaining(s) + ' left';
+    }
+    var next = s.wave + 1;
+    return 'NEXT ' + pips(R.enemies.composition(next)) +
+      '&middot; in <span class="em">' + Math.max(0, Math.ceil(s.countdown)) + 's</span>';
+  }
+
   /* ---------- HUD ---------- */
 
   ui.update = function (s) {
@@ -115,24 +157,65 @@
     setText(el.waveSub, s.endless ? ' ENDLESS' : '/12');
     setText(el.litVal, String(s.beam.litRoadCount));
     setText(el.litSub, '/' + s.roadCells);
+
+    var html = stripHtml(s);
+    if (cache.strip !== html) {
+      cache.strip = html;
+      el.stripText.innerHTML = html;
+    }
   };
 
   /* ---------- events ---------- */
 
+  var goldFloaterAt = 0;
+
   ui.handleEvents = function (s) {
     for (var i = 0; i < s.events.length; i++) {
       var e = s.events[i];
-      if (e.type === 'denied') {
-        if (e.reason === 'gold') {
-          ui.shakeGold();
-          ui.floaterAtCell('Need ' + e.cost, 'dmg', e.c, e.r);
-        } else if (e.reason === 'locked') {
-          ui.floaterAtCell('Locked', 'info', e.c, e.r);
-        }
-      } else if (e.type === 'place') {
-        ui.bumpGold();
+      switch (e.type) {
+        case 'denied':
+          if (e.reason === 'gold') {
+            ui.shakeGold();
+            ui.floaterAtCell('Need ' + e.cost, 'dmg', e.c, e.r);
+          } else if (e.reason === 'locked') {
+            ui.floaterAtCell('Locked', 'info', e.c, e.r);
+          }
+          break;
+        case 'place':
+        case 'sell':
+        case 'upgrade':
+          ui.bumpGold();
+          break;
+        case 'kill':
+          /* Stagger simultaneous kills so the numbers stay readable. */
+          if (realTime - goldFloaterAt > 0.04) {
+            goldFloaterAt = realTime;
+            ui.floaterAtWorld('+' + e.gold, 'gold', e.x, e.z);
+          }
+          ui.bumpGold();
+          break;
+        case 'leak':
+          ui.shakeHp();
+          ui.floaterAtWorld('-' + e.leak, 'dmg', e.x, e.z, { ttl: 1.1 });
+          break;
+        case 'waveclear':
+          ui.notice('WAVE ' + e.wave + ' CLEARED  +' + e.bonus, 2.2);
+          ui.bumpGold();
+          break;
+        case 'wavestart':
+          ui.notice('WAVE ' + e.wave, 1.4);
+          break;
+        case 'unlock':
+          ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
+          break;
+        default:
+          break;
       }
     }
+  };
+
+  var TYPE_LABEL_PIECE = {
+    mirror: 'Mirror', splitter: 'Splitter', reflector: 'Reflector', lamp: 'Lamp'
   };
 
   /* ---------- lifecycle ---------- */
@@ -157,6 +240,7 @@
   };
 
   ui.frame = function (s, dtReal) {
+    realTime += dtReal;
     stepFloaters(dtReal);
     ui.handleEvents(s);
     ui.update(s);
@@ -165,5 +249,7 @@
   ui.reset = function () {
     ui.clearFloaters();
     cache = {};
+    stripNotice = '';
+    stripNoticeUntil = 0;
   };
 })(typeof window !== 'undefined' ? window : globalThis);

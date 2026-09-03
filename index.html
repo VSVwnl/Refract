@@ -16,6 +16,7 @@
     03_state.js
     04_grid.js
     05_beam.js
+    06_enemies.js
     07_pieces.js
     08_render.js
     09_ui.js
@@ -1265,7 +1266,8 @@ body.wide #sideNote { display: block; }
       bendAtStart: false,
       powerStart: 0,
       powerEnd: 0,
-      sourceId: 0
+      sourceId: 0,
+      sourcePower: 0
     };
   }
 
@@ -1316,6 +1318,7 @@ body.wide #sideNote { display: block; }
   var nowTime = 0;
 
   var bendPending = false;
+  var currentSourcePower = 1;
 
   function emit(x0, z0, x1, z1, dir, c0, r0, c1, r1, powerStart, powerEnd, sourceId) {
     if (out.segCount >= B.MAX_SEGMENTS) {
@@ -1331,6 +1334,7 @@ body.wide #sideNote { display: block; }
     s.powerStart = powerStart;
     s.powerEnd = powerEnd;
     s.sourceId = sourceId;
+    s.sourcePower = currentSourcePower;
     return true;
   }
 
@@ -1458,6 +1462,7 @@ body.wide #sideNote { display: block; }
     var sourceId = 1;
 
     visitGen++;
+    currentSourcePower = corePower;
     trace(R.MAP.core[0], R.MAP.core[1], R.N, corePower, 0, sourceId);
 
     var lampPower = R.beam.lampPower(state.coreLevel);
@@ -1468,6 +1473,7 @@ body.wide #sideNote { display: block; }
       if (p.type === 'lamp' && p.inactiveUntil <= nowTime) {
         sourceId++;
         visitGen++;
+        currentSourcePower = lampPower;
         trace(p.c, p.r, p.dir, lampPower, 0, sourceId);
       }
       entry = it.next();
@@ -1572,6 +1578,252 @@ body.wide #sideNote { display: block; }
     if (existing) state.pieces.set(i, existing);
     else state.pieces.delete(i);
     return res;
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+/*
+   ==================================================================
+   06_enemies.js
+   ==================================================================
+*/
+/*
+ * Enemies and waves. Enemies walk the fixed path, absorb light, die or reach
+ * the core. Waves are read from the balance table and generated after wave 12.
+ */
+(function (global) {
+  'use strict';
+  var R = global.R || (global.R = {});
+  var B = R.BALANCE;
+  var CELLS = B.COLS * B.ROWS;
+
+  var en = {};
+  R.enemies = en;
+
+  /* Reused enemy records, so a long run allocates nothing per wave. */
+  var pool = [];
+
+  function acquire() {
+    return pool.length ? pool.pop() : {
+      id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0,
+      gold: 0, leak: 0, radius: 0, boss: false,
+      damage: 0, hitAt: -1, x: 0, z: 0, cell: -1, spawnAt: 0
+    };
+  }
+
+  en.releaseAll = function (s) {
+    if (!s || !s.enemies) return;
+    for (var i = 0; i < s.enemies.length; i++) pool.push(s.enemies[i]);
+    s.enemies.length = 0;
+  };
+
+  /* ---------- wave data ---------- */
+
+  en.hpMult = function (wave) {
+    return 1 + B.HP_MULT_PER_WAVE * (wave - 1);
+  };
+
+  en.speedMult = function (wave) {
+    if (wave <= 12) return 1;
+    return Math.min(B.ENDLESS.SPEED_CAP, 1 + B.ENDLESS.SPEED_PER_WAVE * (wave - 12));
+  };
+
+  /* Endless waves rotate through four shapes and add a king every fifth wave. */
+  en.endlessGroups = function (wave) {
+    var count = B.ENDLESS.BASE_COUNT + wave;
+    var pattern = (wave - 13) % 4;
+    var groups = [];
+    if (pattern === 0) {
+      groups.push(['mote', count, 0.6]);
+      groups.push(['runner', Math.ceil(count / 3), 0.5]);
+    } else if (pattern === 1) {
+      groups.push(['runner', count, 0.45]);
+      groups.push(['mote', Math.ceil(count / 3), 0.7]);
+    } else if (pattern === 2) {
+      groups.push(['swarmling', 8, 0.25]);
+      groups.push(['swarmling', 8, 0.25]);
+      groups.push(['swarmling', 8, 0.25]);
+      groups.push(['mote', Math.ceil(count / 2), 0.6]);
+    } else {
+      groups.push(['brute', Math.max(2, Math.floor(count / 4)), 1.2]);
+      groups.push(['mote', count, 0.6]);
+    }
+    if (wave % B.ENDLESS.KING_EVERY === 0) groups.unshift(['bruteking', 1, 0]);
+    return groups;
+  };
+
+  en.groupsFor = function (wave) {
+    if (wave <= B.WAVES.length) return B.WAVES[wave - 1];
+    return en.endlessGroups(wave);
+  };
+
+  /* Flattened spawn schedule: one entry per enemy, in spawn order. */
+  en.buildQueue = function (wave) {
+    var groups = en.groupsFor(wave);
+    var queue = [];
+    var t = 0;
+    for (var g = 0; g < groups.length; g++) {
+      var type = groups[g][0];
+      var count = groups[g][1];
+      var gap = groups[g][2];
+      for (var i = 0; i < count; i++) {
+        queue.push({ type: type, at: t });
+        if (i < count - 1) t += gap;
+      }
+      t += B.GROUP_GAP;
+    }
+    return queue;
+  };
+
+  /* Composition summary for the incoming strip, in spawn order. */
+  en.composition = function (wave) {
+    var groups = en.groupsFor(wave);
+    var out = [];
+    for (var g = 0; g < groups.length; g++) {
+      var last = out[out.length - 1];
+      if (last && last.type === groups[g][0]) last.count += groups[g][1];
+      else out.push({ type: groups[g][0], count: groups[g][1] });
+    }
+    return out;
+  };
+
+  /* ---------- spawning ---------- */
+
+  en.spawn = function (s, type) {
+    var def = B.ENEMY[type];
+    var e = acquire();
+    e.id = s.nextEnemyId++;
+    e.type = type;
+    e.maxHp = def.boss ? def.hp : Math.round(def.hp * en.hpMult(s.wave));
+    e.hp = e.maxHp;
+    e.t = -1;
+    e.speed = def.speed * en.speedMult(s.wave);
+    e.absorb = def.absorb;
+    e.gold = def.gold;
+    e.leak = def.leak;
+    e.radius = def.radius;
+    e.boss = !!def.boss;
+    e.damage = 0;
+    e.hitAt = -1;
+    e.cell = -1;
+    e.spawnAt = s.time;
+    positionOf(s, e);
+    s.enemies.push(e);
+    R.emit(s, 'spawn', { type: type, id: e.id });
+    return e;
+  };
+
+  /* ---------- movement ---------- */
+
+  /*
+   * Enemies walk from a virtual cell one row above the portal. Below t = -0.5
+   * they are still off the board and cannot be hit.
+   */
+  function pathPoint(s, index, out) {
+    if (index < 0) {
+      out.x = R.grid.worldX(R.MAP.spawn[0]);
+      out.z = R.grid.worldZ(R.MAP.spawn[1]) - 1;
+    } else {
+      var p = s.path[Math.min(index, s.path.length - 1)];
+      out.x = R.grid.worldX(p.c);
+      out.z = R.grid.worldZ(p.r);
+    }
+    return out;
+  }
+
+  var pa = { x: 0, z: 0 };
+  var pb = { x: 0, z: 0 };
+
+  function positionOf(s, e) {
+    var k = Math.floor(e.t);
+    var frac = e.t - k;
+    pathPoint(s, k, pa);
+    pathPoint(s, k + 1, pb);
+    e.x = pa.x + (pb.x - pa.x) * frac;
+    e.z = pa.z + (pb.z - pa.z) * frac;
+    var idx = Math.round(e.t);
+    if (idx < 0) e.cell = -1;
+    else e.cell = s.path[Math.min(idx, s.path.length - 1)].i;
+  }
+
+  en.positionOf = positionOf;
+
+  /* ---------- occupancy ---------- */
+
+  var occ = new Array(CELLS);
+  var occDirty = true;
+
+  en.occupancy = function (s) {
+    for (var i = 0; i < CELLS; i++) occ[i] = null;
+    var list = s.enemies;
+    for (var k = 0; k < list.length; k++) {
+      var e = list[k];
+      if (e.cell < 0) continue;
+      if (!occ[e.cell]) occ[e.cell] = [];
+      occ[e.cell].push(e);
+    }
+    occDirty = false;
+    return occ;
+  };
+
+  /* ---------- per-step work ---------- */
+
+  en.spawnStep = function (s, dt) {
+    if (s.phase !== 'wave') return;
+    while (s.spawnCursor < s.spawnQueue.length && s.spawnQueue[s.spawnCursor].at <= s.waveTime) {
+      en.spawn(s, s.spawnQueue[s.spawnCursor].type);
+      s.spawnCursor++;
+    }
+  };
+
+  en.moveStep = function (s, dt) {
+    var list = s.enemies;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      e.t += e.speed * dt;
+      positionOf(s, e);
+    }
+  };
+
+  /* Damage collected by the solver becomes deaths; survivors may then leak. */
+  en.resolveStep = function (s) {
+    var list = s.enemies;
+    var end = s.path.length - 1;
+    for (var i = list.length - 1; i >= 0; i--) {
+      var e = list[i];
+      if (e.damage > 0) {
+        e.hp -= e.damage;
+        e.damage = 0;
+      }
+      if (e.hp <= 0) {
+        list.splice(i, 1);
+        s.gold += e.gold;
+        s.goldEarned += e.gold;
+        R.emit(s, 'kill', { type: e.type, gold: e.gold, x: e.x, z: e.z, boss: e.boss, id: e.id });
+        pool.push(e);
+        continue;
+      }
+      if (e.t >= end) {
+        list.splice(i, 1);
+        s.coreHp -= e.leak;
+        s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;
+        R.emit(s, 'leak', { type: e.type, leak: e.leak, x: e.x, z: e.z, id: e.id });
+        pool.push(e);
+      }
+    }
+  };
+
+  en.aliveCount = function (s) {
+    return s.enemies.length;
+  };
+
+  en.remaining = function (s) {
+    return s.enemies.length + (s.spawnQueue.length - s.spawnCursor);
+  };
+
+  en.waveComplete = function (s) {
+    return s.spawnCursor >= s.spawnQueue.length && s.enemies.length === 0;
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -2236,18 +2488,22 @@ body.wide #sideNote { display: block; }
     );
 
     dyn.pieceObj = new THREE.Object3D();
+    buildEnemies();
   };
 
-  /* Beam colour runs white to amber to red as the power falls. */
-  function beamColor(power, sourcePower) {
-    var f = sourcePower > 0 ? power / sourcePower : 0;
-    if (f >= 0.7) return C.beamHot;
-    if (f >= 0.35) return R.util.mixColor(C.beamMid, C.beamHot, (f - 0.35) / 0.35);
-    return R.util.mixColor(C.beamLow, C.beamMid, R.util.clamp(f / 0.35, 0, 1));
+  /*
+   * Colour tracks the fraction of the source power that is left, so light
+   * that has been through an enemy is visibly amber and then red. Width tracks
+   * absolute power, so upgrading the core thickens every beam.
+   */
+  function beamColor(fraction) {
+    if (fraction >= 0.86) return C.beamHot;
+    if (fraction >= 0.45) return R.util.mixColor(C.beamMid, C.beamHot, (fraction - 0.45) / 0.41);
+    return R.util.mixColor(C.beamLow, C.beamMid, R.util.clamp(fraction / 0.45, 0, 1));
   }
 
   function beamWidth(power) {
-    return 0.10 + 0.30 * R.util.clamp(power / 35, 0, 1);
+    return 0.09 + 0.27 * R.util.clamp(power / 35, 0, 1);
   }
 
   /*
@@ -2265,9 +2521,9 @@ body.wide #sideNote { display: block; }
       if (kinds[i] !== R.ROAD && kinds[i] !== R.SPAWN) continue;
       var c = i % B.COLS;
       var r = (i - c) / B.COLS;
-      var strength = R.util.clamp(p / srcPower, 0.1, 1);
-      var hue = R.util.mixColor(C.beamLow, C.litGlow, R.util.clamp(strength * 1.6, 0, 1));
-      var col = R.util.mixColor(0x000000, hue, 0.16 + 0.40 * strength);
+      var strength = R.util.clamp(p / srcPower, 0.06, 1);
+      var hue = R.util.mixColor(C.beamLow, C.litGlow, R.util.clamp(strength * 1.5, 0, 1));
+      var col = R.util.mixColor(0x000000, hue, 0.10 + 0.38 * strength);
       f.push(R.grid.worldX(c), LIT_Y, R.grid.worldZ(r), 0, 1.06, 1.06, col);
     }
     f.finish();
@@ -2277,7 +2533,6 @@ body.wide #sideNote { display: block; }
     var glow = new Filler(dyn.beamGlow);
     var core = new Filler(dyn.beamCore);
     var bounce = new Filler(dyn.bounce);
-    var srcPower = R.beam.corePower(state.coreLevel);
     var segs = state.beam.segments;
     var n = state.beam.segCount;
 
@@ -2289,12 +2544,14 @@ body.wide #sideNote { display: block; }
       var mz = (s.z0 + s.z1) / 2;
       var rot = dirAngle(s.dir);
       var power = s.powerStart;
-      var col = beamColor(power, srcPower);
+      var frac = s.sourcePower > 0 ? R.util.clamp(power / s.sourcePower, 0, 1) : 0;
+      var col = beamColor(frac);
       var w = beamWidth(power);
-      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, len + 0.04, R.util.mixColor(0x000000, col, 0.28));
-      core.push(mx, BEAM_Y + 0.005, mz, rot, w * 0.5, len + 0.04, R.util.mixColor(0x000000, col, 0.85));
+      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, len + 0.04, R.util.mixColor(0x000000, col, 0.09 + 0.21 * frac));
+      core.push(mx, BEAM_Y + 0.005, mz, rot, w * (0.34 + 0.2 * frac), len + 0.04,
+        R.util.mixColor(0x000000, col, 0.34 + 0.56 * frac));
       if (s.bendAtStart) {
-        bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.5));
+        bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.2 + 0.3 * frac));
       }
     }
     glow.finish();
@@ -2372,10 +2629,122 @@ body.wide #sideNote { display: block; }
     Object.keys(fills).forEach(function (k) { fills[k].finish(); });
   }
 
+
+  /* ---------- enemies ---------- */
+
+  var MAX_ENEMIES = 72;
+  var MAX_BARS = 72;
+  var UP_VEC = null;
+  var travelVec = null;
+  var billboardX = 0;
+
+  /* Geometry per enemy type. Types added later fall back to the mote shape. */
+  var ENEMY_SHAPE = {};
+
+  function buildEnemies() {
+    UP_VEC = new THREE.Vector3(0, 1, 0);
+    travelVec = new THREE.Vector3(0, 0, 1);
+    billboardX = V.TILT_DEG * Math.PI / 180 - Math.PI / 2;
+
+    var mote = new THREE.SphereGeometry(1, 10, 8);
+    var runner = new THREE.ConeGeometry(0.85, 2.1, 6);
+
+    dyn.enemyMote = makeInstanced(mote, new THREE.MeshLambertMaterial({
+      color: C.enemy.mote, emissive: 0x3a0d5c, emissiveIntensity: 0.55
+    }), MAX_ENEMIES);
+    dyn.enemyRunner = makeInstanced(runner, new THREE.MeshLambertMaterial({
+      color: C.enemy.runner, emissive: 0x0c4a48, emissiveIntensity: 0.6
+    }), MAX_ENEMIES);
+
+    ENEMY_SHAPE.mote = 'enemyMote';
+    ENEMY_SHAPE.runner = 'enemyRunner';
+
+    var quad = new THREE.PlaneGeometry(1, 1);
+    dyn.enemyGlint = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), MAX_ENEMIES, 3);
+    /* White base materials so the per-instance colour is the only tint. */
+    dyn.barBack = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 5);
+    dyn.barFill = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 6);
+    dyn.enemyObj = new THREE.Object3D();
+  }
+
+  Filler.prototype.pushBillboard = function (x, y, z, sx, sy, colorHex) {
+    var mesh = this.mesh;
+    if (this.n >= mesh.instanceMatrix.count) return;
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(billboardX, 0, 0);
+    dummy.scale.set(sx, sy, 1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(this.n, dummy.matrix);
+    mesh.setColorAt(this.n, scratchColor.setHex(colorHex));
+    this.n++;
+  };
+
+  function shapeKey(type) {
+    return ENEMY_SHAPE[type] || 'enemyMote';
+  }
+
+  function drawEnemies(state) {
+    var fills = {};
+    var k;
+    for (k in ENEMY_SHAPE) {
+      if (!fills[ENEMY_SHAPE[k]]) fills[ENEMY_SHAPE[k]] = new Filler(dyn[ENEMY_SHAPE[k]]);
+    }
+    var glint = new Filler(dyn.enemyGlint);
+    var back = new Filler(dyn.barBack);
+    var fill = new Filler(dyn.barFill);
+    var o = dyn.enemyObj;
+    var list = state.enemies;
+
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (e.t < -1) continue;
+      var fade = R.util.clamp(e.t + 1, 0, 1);
+      /* Enemies grow out of the portal instead of sliding in half-clipped. */
+      var rad = e.radius * (0.25 + 0.75 * fade);
+      var y = rad + 0.06;
+      var hit = state.time - e.hitAt;
+      var flash = hit >= 0 && hit < 0.09 ? 1 : 0;
+      var body = C.enemy[e.type] || C.enemy.mote;
+      var tint = flash ? R.util.mixColor(0xffffff, 0xffffff, 1) : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
+
+      o.position.set(e.x, y, e.z);
+      o.scale.set(rad, rad, rad);
+      if (e.type === 'runner') {
+        travelVec.set(e.dx, 0, e.dz);
+        if (travelVec.lengthSq() < 1e-6) travelVec.set(0, 0, 1);
+        travelVec.normalize();
+        o.quaternion.setFromUnitVectors(UP_VEC, travelVec);
+      } else {
+        o.quaternion.set(0, 0, 0, 1);
+        o.rotation.y = state.time * 0.8 + e.id;
+      }
+      fills[shapeKey(e.type)].pushObject(o, tint);
+
+      var glintCol = C.enemyGlint[e.type] || C.enemyGlint.mote;
+      glint.pushBillboard(e.x, y, e.z, rad * 2.3, rad * 2.3,
+        R.util.mixColor(0x000000, flash ? 0xffffff : glintCol, (flash ? 0.85 : 0.4) * fade));
+
+      if (e.hp < e.maxHp && e.t >= 0) {
+        var w = Math.max(0.5, rad * 2.1);
+        var by = y + rad + 0.22;
+        var frac = R.util.clamp(e.hp / e.maxHp, 0, 1);
+        back.pushBillboard(e.x, by, e.z, w + 0.07, 0.16, 0x141a2c);
+        fill.pushBillboard(e.x - w * (1 - frac) / 2, by, e.z, w * frac, 0.09,
+          frac > 0.5 ? 0x7ce0a8 : (frac > 0.25 ? 0xffc247 : 0xff5d6c));
+      }
+    }
+
+    for (k in fills) fills[k].finish();
+    glint.finish();
+    back.finish();
+    fill.finish();
+  }
+
   rd.drawDynamic = function (state) {
     drawLitTiles(state);
     drawBeams(state);
     drawPieces(state);
+    drawEnemies(state);
   };
 
   /* ---------- frame ---------- */
@@ -2491,6 +2860,12 @@ body.wide #sideNote { display: block; }
     return ui.floater(text, kind, p.x, p.y, opts);
   };
 
+  ui.floaterAtWorld = function (text, kind, x, z, opts) {
+    var p = R.render.project(x, 0.4, z);
+    if (!p) return null;
+    return ui.floater(text, kind, p.x, p.y, opts);
+  };
+
   function stepFloaters(dt) {
     for (var i = 0; i < floaters.length; i++) {
       var f = floaters[i];
@@ -2529,6 +2904,42 @@ body.wide #sideNote { display: block; }
   ui.shakeHp = function () { pulse(el.statHp, 'shake'); };
   ui.pulseLit = function () { pulse(el.statLit, 'bump'); };
 
+  /* ---------- incoming strip ---------- */
+
+  var stripNotice = '';
+  var stripNoticeUntil = 0;
+  var realTime = 0;
+
+  function pips(comp) {
+    var html = '';
+    for (var i = 0; i < comp.length; i++) {
+      var g = comp[i];
+      var big = g.type === 'bruteking' || g.type === 'umbra';
+      html += '<span class="pip ' + g.type + (big ? ' big' : '') + '"></span>';
+      html += '<span class="' + (big ? 'warn' : '') + '">' + g.count + '</span> ';
+    }
+    return html;
+  }
+
+  ui.notice = function (text, seconds) {
+    stripNotice = text;
+    stripNoticeUntil = realTime + (seconds || 2.4);
+    el.strip.classList.remove('flash');
+    void el.strip.offsetWidth;
+    el.strip.classList.add('flash');
+  };
+
+  function stripHtml(s) {
+    if (stripNotice && realTime < stripNoticeUntil) return '<span class="warn">' + stripNotice + '</span>';
+    if (s.phase === 'wave') {
+      return '<span class="em">WAVE ' + s.wave + '</span> &middot; ' +
+        R.enemies.remaining(s) + ' left';
+    }
+    var next = s.wave + 1;
+    return 'NEXT ' + pips(R.enemies.composition(next)) +
+      '&middot; in <span class="em">' + Math.max(0, Math.ceil(s.countdown)) + 's</span>';
+  }
+
   /* ---------- HUD ---------- */
 
   ui.update = function (s) {
@@ -2538,24 +2949,65 @@ body.wide #sideNote { display: block; }
     setText(el.waveSub, s.endless ? ' ENDLESS' : '/12');
     setText(el.litVal, String(s.beam.litRoadCount));
     setText(el.litSub, '/' + s.roadCells);
+
+    var html = stripHtml(s);
+    if (cache.strip !== html) {
+      cache.strip = html;
+      el.stripText.innerHTML = html;
+    }
   };
 
   /* ---------- events ---------- */
 
+  var goldFloaterAt = 0;
+
   ui.handleEvents = function (s) {
     for (var i = 0; i < s.events.length; i++) {
       var e = s.events[i];
-      if (e.type === 'denied') {
-        if (e.reason === 'gold') {
-          ui.shakeGold();
-          ui.floaterAtCell('Need ' + e.cost, 'dmg', e.c, e.r);
-        } else if (e.reason === 'locked') {
-          ui.floaterAtCell('Locked', 'info', e.c, e.r);
-        }
-      } else if (e.type === 'place') {
-        ui.bumpGold();
+      switch (e.type) {
+        case 'denied':
+          if (e.reason === 'gold') {
+            ui.shakeGold();
+            ui.floaterAtCell('Need ' + e.cost, 'dmg', e.c, e.r);
+          } else if (e.reason === 'locked') {
+            ui.floaterAtCell('Locked', 'info', e.c, e.r);
+          }
+          break;
+        case 'place':
+        case 'sell':
+        case 'upgrade':
+          ui.bumpGold();
+          break;
+        case 'kill':
+          /* Stagger simultaneous kills so the numbers stay readable. */
+          if (realTime - goldFloaterAt > 0.04) {
+            goldFloaterAt = realTime;
+            ui.floaterAtWorld('+' + e.gold, 'gold', e.x, e.z);
+          }
+          ui.bumpGold();
+          break;
+        case 'leak':
+          ui.shakeHp();
+          ui.floaterAtWorld('-' + e.leak, 'dmg', e.x, e.z, { ttl: 1.1 });
+          break;
+        case 'waveclear':
+          ui.notice('WAVE ' + e.wave + ' CLEARED  +' + e.bonus, 2.2);
+          ui.bumpGold();
+          break;
+        case 'wavestart':
+          ui.notice('WAVE ' + e.wave, 1.4);
+          break;
+        case 'unlock':
+          ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
+          break;
+        default:
+          break;
       }
     }
+  };
+
+  var TYPE_LABEL_PIECE = {
+    mirror: 'Mirror', splitter: 'Splitter', reflector: 'Reflector', lamp: 'Lamp'
   };
 
   /* ---------- lifecycle ---------- */
@@ -2580,6 +3032,7 @@ body.wide #sideNote { display: block; }
   };
 
   ui.frame = function (s, dtReal) {
+    realTime += dtReal;
     stepFloaters(dtReal);
     ui.handleEvents(s);
     ui.update(s);
@@ -2588,6 +3041,8 @@ body.wide #sideNote { display: block; }
   ui.reset = function () {
     ui.clearFloaters();
     cache = {};
+    stripNotice = '';
+    stripNoticeUntil = 0;
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -2776,6 +3231,7 @@ body.wide #sideNote { display: block; }
   /* ---------- run lifecycle ---------- */
 
   R.newRun = function (seed) {
+    if (R.state) R.enemies.releaseAll(R.state);
     var s = R.resetState(seed === undefined ? (Date.now() & 0x7fffffff) : seed);
     R.state = s;
     /* The board is live from the first frame; the title screen arrives in a later phase. */
@@ -2787,16 +3243,67 @@ body.wide #sideNote { display: block; }
     return s;
   };
 
+  /* ---------- wave flow ---------- */
+
+  R.applyUnlocks = function (s, upcomingWave) {
+    var table = R.BALANCE.UNLOCK_WAVE;
+    for (var type in table) {
+      if (!s.unlocked[type] && upcomingWave >= table[type]) {
+        s.unlocked[type] = true;
+        R.emit(s, 'unlock', { type: type });
+      }
+    }
+  };
+
+  R.startWave = function (s) {
+    s.wave++;
+    s.spawnQueue = R.enemies.buildQueue(s.wave);
+    s.spawnCursor = 0;
+    s.waveEnemiesTotal = s.spawnQueue.length;
+    s.waveTime = 0;
+    s.countdown = 0;
+    s.phase = 'wave';
+    R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
+  };
+
+  R.finishWave = function (s) {
+    var bonus = R.BALANCE.WAVE_CLEAR_BASE + R.BALANCE.WAVE_CLEAR_PER_WAVE * s.wave;
+    s.wavesCleared++;
+    s.gold += bonus;
+    s.goldEarned += bonus;
+    R.emit(s, 'waveclear', { wave: s.wave, bonus: bonus });
+    s.phase = 'building';
+    s.countdown = R.BALANCE.COUNTDOWN;
+    R.applyUnlocks(s, s.wave + 1);
+  };
+
   /* ---------- simulation ---------- */
 
   /*
    * One fixed step, in the order the systems depend on each other:
-   * time, spawning, movement, light and damage, deaths and leaks, economy,
-   * phase transitions.
+   * countdown, spawning, movement, light and damage, deaths and leaks,
+   * then the phase transitions those results imply.
    */
   R.simStep = function (s, dt) {
     s.time += dt;
-    R.beam.solve(s, null, dt, s.beam);
+
+    if (s.phase === 'building') {
+      s.countdown -= dt;
+      if (s.countdown <= 0) R.startWave(s);
+    }
+
+    if (s.phase === 'wave') {
+      s.waveTime += dt;
+      R.enemies.spawnStep(s, dt);
+    }
+
+    R.enemies.moveStep(s, dt);
+    R.beam.solve(s, R.enemies.occupancy(s), dt, s.beam);
+    R.enemies.resolveStep(s);
+
+    if (s.coreHp < 0) s.coreHp = 0;
+
+    if (s.phase === 'wave' && R.enemies.waveComplete(s)) R.finishWave(s);
   };
 
   /* ---------- main loop ---------- */
@@ -2965,12 +3472,40 @@ body.wide #sideNote { display: block; }
         return R.state.rngSeed;
       },
 
+      /* Speed 0 stops the frame loop from stepping, so step() owns the clock. */
+      freeze: function (on) {
+        R.state.speed = on === false ? 1 : 0;
+        return R.state.speed;
+      },
+
       step: function (seconds) {
         var s = R.state;
         var dt = R.TIMING.FIXED_STEP;
         var n = Math.round(seconds / dt);
-        for (var i = 0; i < n; i++) R.simStep(s, dt);
+        for (var i = 0; i < n; i++) {
+          R.simStep(s, dt);
+          s.events.length = 0;
+        }
         return s.time;
+      },
+
+      /* Advance until a predicate holds or the budget runs out. */
+      stepUntil: function (source, maxSeconds) {
+        var s = R.state;
+        var dt = R.TIMING.FIXED_STEP;
+        var done = new Function('s', 'R', 'return (' + source + ');');
+        var n = Math.round((maxSeconds || 120) / dt);
+        for (var i = 0; i < n; i++) {
+          if (done(s, R)) return s.time;
+          R.simStep(s, dt);
+          s.events.length = 0;
+        }
+        return s.time;
+      },
+
+      nextWave: function () {
+        if (R.state.phase === 'building') R.startWave(R.state);
+        return R.state.wave;
       },
 
       snapshot: function () {
@@ -2986,6 +3521,7 @@ body.wide #sideNote { display: block; }
         return {
           phase: s.phase,
           wave: s.wave,
+          wavesCleared: s.wavesCleared,
           endless: s.endless,
           countdown: Math.round(s.countdown * 100) / 100,
           time: Math.round(s.time * 100) / 100,
@@ -3011,7 +3547,7 @@ body.wide #sideNote { display: block; }
     panel = document.createElement('div');
     panel.id = 'debugPanel';
     panel.style.cssText = [
-      'position:absolute', 'left:2px', 'top:2px', 'z-index:40',
+      'position:absolute', 'left:2px', 'bottom:2px', 'z-index:40',
       'font:10px/1.35 monospace', 'color:#9fe', 'background:rgba(0,0,0,0.62)',
       'padding:4px 6px', 'border-radius:4px', 'pointer-events:none',
       'white-space:pre'

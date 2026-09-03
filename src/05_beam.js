@@ -29,7 +29,8 @@
       bendAtStart: false,
       powerStart: 0,
       powerEnd: 0,
-      sourceId: 0
+      sourceId: 0,
+      sourcePower: 0
     };
   }
 
@@ -80,6 +81,7 @@
   var nowTime = 0;
 
   var bendPending = false;
+  var currentSourcePower = 1;
 
   function emit(x0, z0, x1, z1, dir, c0, r0, c1, r1, powerStart, powerEnd, sourceId) {
     if (out.segCount >= B.MAX_SEGMENTS) {
@@ -95,6 +97,7 @@
     s.powerStart = powerStart;
     s.powerEnd = powerEnd;
     s.sourceId = sourceId;
+    s.sourcePower = currentSourcePower;
     return true;
   }
 
@@ -222,6 +225,7 @@
     var sourceId = 1;
 
     visitGen++;
+    currentSourcePower = corePower;
     trace(R.MAP.core[0], R.MAP.core[1], R.N, corePower, 0, sourceId);
 
     var lampPower = R.beam.lampPower(state.coreLevel);
@@ -232,6 +236,7 @@
       if (p.type === 'lamp' && p.inactiveUntil <= nowTime) {
         sourceId++;
         visitGen++;
+        currentSourcePower = lampPower;
         trace(p.c, p.r, p.dir, lampPower, 0, sourceId);
       }
       entry = it.next();

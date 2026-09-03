@@ -54,12 +54,40 @@
         return R.state.rngSeed;
       },
 
+      /* Speed 0 stops the frame loop from stepping, so step() owns the clock. */
+      freeze: function (on) {
+        R.state.speed = on === false ? 1 : 0;
+        return R.state.speed;
+      },
+
       step: function (seconds) {
         var s = R.state;
         var dt = R.TIMING.FIXED_STEP;
         var n = Math.round(seconds / dt);
-        for (var i = 0; i < n; i++) R.simStep(s, dt);
+        for (var i = 0; i < n; i++) {
+          R.simStep(s, dt);
+          s.events.length = 0;
+        }
         return s.time;
+      },
+
+      /* Advance until a predicate holds or the budget runs out. */
+      stepUntil: function (source, maxSeconds) {
+        var s = R.state;
+        var dt = R.TIMING.FIXED_STEP;
+        var done = new Function('s', 'R', 'return (' + source + ');');
+        var n = Math.round((maxSeconds || 120) / dt);
+        for (var i = 0; i < n; i++) {
+          if (done(s, R)) return s.time;
+          R.simStep(s, dt);
+          s.events.length = 0;
+        }
+        return s.time;
+      },
+
+      nextWave: function () {
+        if (R.state.phase === 'building') R.startWave(R.state);
+        return R.state.wave;
       },
 
       snapshot: function () {
@@ -75,6 +103,7 @@
         return {
           phase: s.phase,
           wave: s.wave,
+          wavesCleared: s.wavesCleared,
           endless: s.endless,
           countdown: Math.round(s.countdown * 100) / 100,
           time: Math.round(s.time * 100) / 100,
@@ -100,7 +129,7 @@
     panel = document.createElement('div');
     panel.id = 'debugPanel';
     panel.style.cssText = [
-      'position:absolute', 'left:2px', 'top:2px', 'z-index:40',
+      'position:absolute', 'left:2px', 'bottom:2px', 'z-index:40',
       'font:10px/1.35 monospace', 'color:#9fe', 'background:rgba(0,0,0,0.62)',
       'padding:4px 6px', 'border-radius:4px', 'pointer-events:none',
       'white-space:pre'

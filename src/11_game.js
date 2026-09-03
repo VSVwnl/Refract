@@ -75,6 +75,7 @@
   /* ---------- run lifecycle ---------- */
 
   R.newRun = function (seed) {
+    if (R.state) R.enemies.releaseAll(R.state);
     var s = R.resetState(seed === undefined ? (Date.now() & 0x7fffffff) : seed);
     R.state = s;
     /* The board is live from the first frame; the title screen arrives in a later phase. */
@@ -86,16 +87,67 @@
     return s;
   };
 
+  /* ---------- wave flow ---------- */
+
+  R.applyUnlocks = function (s, upcomingWave) {
+    var table = R.BALANCE.UNLOCK_WAVE;
+    for (var type in table) {
+      if (!s.unlocked[type] && upcomingWave >= table[type]) {
+        s.unlocked[type] = true;
+        R.emit(s, 'unlock', { type: type });
+      }
+    }
+  };
+
+  R.startWave = function (s) {
+    s.wave++;
+    s.spawnQueue = R.enemies.buildQueue(s.wave);
+    s.spawnCursor = 0;
+    s.waveEnemiesTotal = s.spawnQueue.length;
+    s.waveTime = 0;
+    s.countdown = 0;
+    s.phase = 'wave';
+    R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
+  };
+
+  R.finishWave = function (s) {
+    var bonus = R.BALANCE.WAVE_CLEAR_BASE + R.BALANCE.WAVE_CLEAR_PER_WAVE * s.wave;
+    s.wavesCleared++;
+    s.gold += bonus;
+    s.goldEarned += bonus;
+    R.emit(s, 'waveclear', { wave: s.wave, bonus: bonus });
+    s.phase = 'building';
+    s.countdown = R.BALANCE.COUNTDOWN;
+    R.applyUnlocks(s, s.wave + 1);
+  };
+
   /* ---------- simulation ---------- */
 
   /*
    * One fixed step, in the order the systems depend on each other:
-   * time, spawning, movement, light and damage, deaths and leaks, economy,
-   * phase transitions.
+   * countdown, spawning, movement, light and damage, deaths and leaks,
+   * then the phase transitions those results imply.
    */
   R.simStep = function (s, dt) {
     s.time += dt;
-    R.beam.solve(s, null, dt, s.beam);
+
+    if (s.phase === 'building') {
+      s.countdown -= dt;
+      if (s.countdown <= 0) R.startWave(s);
+    }
+
+    if (s.phase === 'wave') {
+      s.waveTime += dt;
+      R.enemies.spawnStep(s, dt);
+    }
+
+    R.enemies.moveStep(s, dt);
+    R.beam.solve(s, R.enemies.occupancy(s), dt, s.beam);
+    R.enemies.resolveStep(s);
+
+    if (s.coreHp < 0) s.coreHp = 0;
+
+    if (s.phase === 'wave' && R.enemies.waveComplete(s)) R.finishWave(s);
   };
 
   /* ---------- main loop ---------- */

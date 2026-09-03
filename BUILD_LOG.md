@@ -153,3 +153,55 @@ is a self-contained chunk of work with its own testing pass.
 **Result:** 26 Node tests pass. `node tools/build.js && node tools/check.js` passes on the release build (79.3 kB, 10 source files). The game is playable to the extent Phase 1 defines: the beam is live at load, taps bend it, LIT and gold respond, and the whole board reads clearly at phone size.
 
 **Next step:** Phase 2 — enemies, waves 1 to 3, damage, gold and core HP.
+
+
+### Session 1 — 2026-09-03 — Phase 2: the complete core loop
+
+**Goal:** Enemies walk, burn, die or leak; gold and core HP work; waves 1 to 3 play end to end.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 2.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile-emulation tests; a live Chrome tab for a visual confirmation with real pointer input.
+
+**Work completed:**
+
+- `src/06_enemies.js`: pooled enemy records, the HP and speed multipliers, the wave tables flattened into a spawn schedule, the endless generator, the composition summary used by the incoming strip, path following with a virtual start one row above the portal, the occupancy map, and the per-step spawn, move and resolve passes. Deaths are settled before leaks, so a killing blow in the same step as arrival cannot cost core HP.
+- Wave flow in `src/11_game.js`: countdown to wave, wave to clear bonus, unlock checks for the upcoming wave, then the next countdown. The fixed step now runs countdown, spawning, movement, light and damage, deaths and leaks, then the phase transitions those imply.
+- Enemy rendering: instanced mote spheres and runner cones (the remaining four types arrive in Phase 5), an additive glint per enemy for readability on the dark board, and camera-facing HP bars that appear only once an enemy is damaged.
+- `src/09_ui.js`: the incoming strip (enemy pips and counts in spawn order during the countdown, wave number and enemies left during a wave, and short notices for wave start, wave cleared and unlocks), gold and damage floaters over the board, HP and gold counter animations.
+- Debug additions: `freeze`, `step`, `stepUntil`, `nextWave` and a fuller `snapshot`, so wave-length tests run deterministically instead of waiting on real time.
+
+**Browser testing:** `node tools/qa.js waves` at 390x844. 31 checks, all passing, with the arithmetic recorded:
+
+- No pieces, wave 1: all four motes cross the single lit corner cell, take 10 of their 30 HP and leak, core 20 to 16, `leaksBy.mote` 4, gold 40 plus the 15 clear bonus = 55, countdown returns to 8 s, Splitter unlocks for wave 2 and Reflector does not.
+- One mirror at (7,6) before wave 1: LIT 6/25, no leaks, gold 20 + 16 (four kills at 4) + 15 (bonus) = 51 and `goldEarned` 31.
+- Waves 2 and 3 clear; Reflector unlocks going into wave 4; after three waves core 20/20, gold 158, score 488.
+- Absorption ordering: with a mirror at (7,3) and motes on row 3, the measured power along the beam east to west is [10, 10, 10, 10, 10, 7.5] — the cell past a mote is at 75 percent, exactly one mote's absorption.
+- A runner crossing only the corner cell reaches the core; the same runner with row 3 lit dies before it arrives and pays gold.
+- Speed 2 doubles the clock. 25 draw calls.
+
+Screenshots `shots/waves-390x844-a-wave1-running.png` through `-e-absorption-zoom.png` reviewed. Also confirmed by hand in a live Chrome tab: clicking (7,3) places the mirror, the beam bends, motes burn with HP bars, the beam is visibly thinner and dimmer past each enemy. Console: no messages from our code. Network: two requests.
+
+**Problems found:**
+
+1. The beam did not visibly dim past an enemy. The colour ramp treated anything above 70 percent of source power as pure white, and a single mote only takes power to 75 percent, so the most important teaching visual in the game did nothing.
+2. HP bars rendered muddy brown. The bar materials had coloured base colours which multiplied with the per-instance colour.
+3. Enemies walking in from the virtual start were clipped in half by the top of the camera frustum.
+4. In tests, setting `s.wave` by hand let the countdown start a real wave underneath the test and corrupt the result. `wavesCleared` was also missing from `snapshot()`.
+5. The debug panel sat on top of the HUD.
+
+**Fixes:**
+
+1. Segments now carry the power of the source that produced them, and colour is driven by the fraction of that source power left, with a much steeper ramp (white above 86 percent, amber by 45 percent, red below). Additive intensity and the bright core line also scale with the fraction, while width still scales with absolute power so core upgrades thicken every beam. The step is now obvious in a screenshot.
+2. Bar materials are white; only the per-instance colour tints them.
+3. Enemies scale up from a quarter size as they walk in, so they grow out of the portal instead of sliding in clipped.
+4. Tests park the countdown; `snapshot()` reports `wavesCleared`.
+5. Debug panel moved to the bottom-left.
+
+**Decisions locked:** No changes to Part 1.
+
+**Balance changes:** none. The spec's stated first-wave shape (no mirror gives four leaks; a mirror at (7,6) kills all four) is confirmed exactly by measurement.
+
+**Result:** 26 Node tests and 31 browser checks pass. Waves 1 to 3 play end to end with correct gold and HP arithmetic, and absorption ordering is visible on screen.
+
+**Next step:** Phase 3 — title screen, win, lose, pause and a residue-free restart.

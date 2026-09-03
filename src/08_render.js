@@ -541,18 +541,22 @@
     );
 
     dyn.pieceObj = new THREE.Object3D();
+    buildEnemies();
   };
 
-  /* Beam colour runs white to amber to red as the power falls. */
-  function beamColor(power, sourcePower) {
-    var f = sourcePower > 0 ? power / sourcePower : 0;
-    if (f >= 0.7) return C.beamHot;
-    if (f >= 0.35) return R.util.mixColor(C.beamMid, C.beamHot, (f - 0.35) / 0.35);
-    return R.util.mixColor(C.beamLow, C.beamMid, R.util.clamp(f / 0.35, 0, 1));
+  /*
+   * Colour tracks the fraction of the source power that is left, so light
+   * that has been through an enemy is visibly amber and then red. Width tracks
+   * absolute power, so upgrading the core thickens every beam.
+   */
+  function beamColor(fraction) {
+    if (fraction >= 0.86) return C.beamHot;
+    if (fraction >= 0.45) return R.util.mixColor(C.beamMid, C.beamHot, (fraction - 0.45) / 0.41);
+    return R.util.mixColor(C.beamLow, C.beamMid, R.util.clamp(fraction / 0.45, 0, 1));
   }
 
   function beamWidth(power) {
-    return 0.10 + 0.30 * R.util.clamp(power / 35, 0, 1);
+    return 0.09 + 0.27 * R.util.clamp(power / 35, 0, 1);
   }
 
   /*
@@ -570,9 +574,9 @@
       if (kinds[i] !== R.ROAD && kinds[i] !== R.SPAWN) continue;
       var c = i % B.COLS;
       var r = (i - c) / B.COLS;
-      var strength = R.util.clamp(p / srcPower, 0.1, 1);
-      var hue = R.util.mixColor(C.beamLow, C.litGlow, R.util.clamp(strength * 1.6, 0, 1));
-      var col = R.util.mixColor(0x000000, hue, 0.16 + 0.40 * strength);
+      var strength = R.util.clamp(p / srcPower, 0.06, 1);
+      var hue = R.util.mixColor(C.beamLow, C.litGlow, R.util.clamp(strength * 1.5, 0, 1));
+      var col = R.util.mixColor(0x000000, hue, 0.10 + 0.38 * strength);
       f.push(R.grid.worldX(c), LIT_Y, R.grid.worldZ(r), 0, 1.06, 1.06, col);
     }
     f.finish();
@@ -582,7 +586,6 @@
     var glow = new Filler(dyn.beamGlow);
     var core = new Filler(dyn.beamCore);
     var bounce = new Filler(dyn.bounce);
-    var srcPower = R.beam.corePower(state.coreLevel);
     var segs = state.beam.segments;
     var n = state.beam.segCount;
 
@@ -594,12 +597,14 @@
       var mz = (s.z0 + s.z1) / 2;
       var rot = dirAngle(s.dir);
       var power = s.powerStart;
-      var col = beamColor(power, srcPower);
+      var frac = s.sourcePower > 0 ? R.util.clamp(power / s.sourcePower, 0, 1) : 0;
+      var col = beamColor(frac);
       var w = beamWidth(power);
-      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, len + 0.04, R.util.mixColor(0x000000, col, 0.28));
-      core.push(mx, BEAM_Y + 0.005, mz, rot, w * 0.5, len + 0.04, R.util.mixColor(0x000000, col, 0.85));
+      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, len + 0.04, R.util.mixColor(0x000000, col, 0.09 + 0.21 * frac));
+      core.push(mx, BEAM_Y + 0.005, mz, rot, w * (0.34 + 0.2 * frac), len + 0.04,
+        R.util.mixColor(0x000000, col, 0.34 + 0.56 * frac));
       if (s.bendAtStart) {
-        bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.5));
+        bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.2 + 0.3 * frac));
       }
     }
     glow.finish();
@@ -677,10 +682,122 @@
     Object.keys(fills).forEach(function (k) { fills[k].finish(); });
   }
 
+
+  /* ---------- enemies ---------- */
+
+  var MAX_ENEMIES = 72;
+  var MAX_BARS = 72;
+  var UP_VEC = null;
+  var travelVec = null;
+  var billboardX = 0;
+
+  /* Geometry per enemy type. Types added later fall back to the mote shape. */
+  var ENEMY_SHAPE = {};
+
+  function buildEnemies() {
+    UP_VEC = new THREE.Vector3(0, 1, 0);
+    travelVec = new THREE.Vector3(0, 0, 1);
+    billboardX = V.TILT_DEG * Math.PI / 180 - Math.PI / 2;
+
+    var mote = new THREE.SphereGeometry(1, 10, 8);
+    var runner = new THREE.ConeGeometry(0.85, 2.1, 6);
+
+    dyn.enemyMote = makeInstanced(mote, new THREE.MeshLambertMaterial({
+      color: C.enemy.mote, emissive: 0x3a0d5c, emissiveIntensity: 0.55
+    }), MAX_ENEMIES);
+    dyn.enemyRunner = makeInstanced(runner, new THREE.MeshLambertMaterial({
+      color: C.enemy.runner, emissive: 0x0c4a48, emissiveIntensity: 0.6
+    }), MAX_ENEMIES);
+
+    ENEMY_SHAPE.mote = 'enemyMote';
+    ENEMY_SHAPE.runner = 'enemyRunner';
+
+    var quad = new THREE.PlaneGeometry(1, 1);
+    dyn.enemyGlint = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), MAX_ENEMIES, 3);
+    /* White base materials so the per-instance colour is the only tint. */
+    dyn.barBack = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 5);
+    dyn.barFill = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 6);
+    dyn.enemyObj = new THREE.Object3D();
+  }
+
+  Filler.prototype.pushBillboard = function (x, y, z, sx, sy, colorHex) {
+    var mesh = this.mesh;
+    if (this.n >= mesh.instanceMatrix.count) return;
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(billboardX, 0, 0);
+    dummy.scale.set(sx, sy, 1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(this.n, dummy.matrix);
+    mesh.setColorAt(this.n, scratchColor.setHex(colorHex));
+    this.n++;
+  };
+
+  function shapeKey(type) {
+    return ENEMY_SHAPE[type] || 'enemyMote';
+  }
+
+  function drawEnemies(state) {
+    var fills = {};
+    var k;
+    for (k in ENEMY_SHAPE) {
+      if (!fills[ENEMY_SHAPE[k]]) fills[ENEMY_SHAPE[k]] = new Filler(dyn[ENEMY_SHAPE[k]]);
+    }
+    var glint = new Filler(dyn.enemyGlint);
+    var back = new Filler(dyn.barBack);
+    var fill = new Filler(dyn.barFill);
+    var o = dyn.enemyObj;
+    var list = state.enemies;
+
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (e.t < -1) continue;
+      var fade = R.util.clamp(e.t + 1, 0, 1);
+      /* Enemies grow out of the portal instead of sliding in half-clipped. */
+      var rad = e.radius * (0.25 + 0.75 * fade);
+      var y = rad + 0.06;
+      var hit = state.time - e.hitAt;
+      var flash = hit >= 0 && hit < 0.09 ? 1 : 0;
+      var body = C.enemy[e.type] || C.enemy.mote;
+      var tint = flash ? R.util.mixColor(0xffffff, 0xffffff, 1) : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
+
+      o.position.set(e.x, y, e.z);
+      o.scale.set(rad, rad, rad);
+      if (e.type === 'runner') {
+        travelVec.set(e.dx, 0, e.dz);
+        if (travelVec.lengthSq() < 1e-6) travelVec.set(0, 0, 1);
+        travelVec.normalize();
+        o.quaternion.setFromUnitVectors(UP_VEC, travelVec);
+      } else {
+        o.quaternion.set(0, 0, 0, 1);
+        o.rotation.y = state.time * 0.8 + e.id;
+      }
+      fills[shapeKey(e.type)].pushObject(o, tint);
+
+      var glintCol = C.enemyGlint[e.type] || C.enemyGlint.mote;
+      glint.pushBillboard(e.x, y, e.z, rad * 2.3, rad * 2.3,
+        R.util.mixColor(0x000000, flash ? 0xffffff : glintCol, (flash ? 0.85 : 0.4) * fade));
+
+      if (e.hp < e.maxHp && e.t >= 0) {
+        var w = Math.max(0.5, rad * 2.1);
+        var by = y + rad + 0.22;
+        var frac = R.util.clamp(e.hp / e.maxHp, 0, 1);
+        back.pushBillboard(e.x, by, e.z, w + 0.07, 0.16, 0x141a2c);
+        fill.pushBillboard(e.x - w * (1 - frac) / 2, by, e.z, w * frac, 0.09,
+          frac > 0.5 ? 0x7ce0a8 : (frac > 0.25 ? 0xffc247 : 0xff5d6c));
+      }
+    }
+
+    for (k in fills) fills[k].finish();
+    glint.finish();
+    back.finish();
+    fill.finish();
+  }
+
   rd.drawDynamic = function (state) {
     drawLitTiles(state);
     drawBeams(state);
     drawPieces(state);
+    drawEnemies(state);
   };
 
   /* ---------- frame ---------- */
