@@ -78,13 +78,43 @@
     if (R.state) R.enemies.releaseAll(R.state);
     var s = R.resetState(seed === undefined ? (Date.now() & 0x7fffffff) : seed);
     R.state = s;
-    /* The board is live from the first frame; the title screen arrives in a later phase. */
-    s.phase = 'building';
     R.beam.recompute(s);
     if (R.ui.reset) R.ui.reset();
     if (R.input.cancel) R.input.cancel();
     accumulator = 0;
     return s;
+  };
+
+  /* A fresh run that opens on the title card. */
+  R.titleRun = function (seed) {
+    var s = R.newRun(seed);
+    s.phase = 'title';
+    return s;
+  };
+
+  /* Leave the title card and start playing. */
+  R.startRun = function () {
+    var s = R.state;
+    if (s.phase !== 'title') return;
+    s.phase = 'building';
+    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
+    R.emit(s, 'runstart', {});
+  };
+
+  /* Straight back to the board: the title card is only shown on first load. */
+  R.restartRun = function (seed) {
+    var s = R.newRun(seed);
+    s.phase = 'building';
+    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
+    R.emit(s, 'runstart', {});
+    return s;
+  };
+
+  R.endRun = function (s, won) {
+    s.score = R.computeScore(s);
+    s.phase = won ? 'won' : 'lost';
+    R.saveBest(s.score);
+    R.emit(s, won ? 'win' : 'lose', { score: s.score, wave: s.wave });
   };
 
   /* ---------- wave flow ---------- */
@@ -110,12 +140,22 @@
     R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
   };
 
+  /* Starting a wave early trades building time for gold (bonus added later). */
+  R.callWaveEarly = function (s) {
+    if (s.phase !== 'building') return;
+    R.startWave(s);
+  };
+
   R.finishWave = function (s) {
     var bonus = R.BALANCE.WAVE_CLEAR_BASE + R.BALANCE.WAVE_CLEAR_PER_WAVE * s.wave;
     s.wavesCleared++;
     s.gold += bonus;
     s.goldEarned += bonus;
     R.emit(s, 'waveclear', { wave: s.wave, bonus: bonus });
+    if (!s.endless && s.wave >= R.BALANCE.WAVES.length) {
+      R.endRun(s, true);
+      return;
+    }
     s.phase = 'building';
     s.countdown = R.BALANCE.COUNTDOWN;
     R.applyUnlocks(s, s.wave + 1);
@@ -145,7 +185,11 @@
     R.beam.solve(s, R.enemies.occupancy(s), dt, s.beam);
     R.enemies.resolveStep(s);
 
-    if (s.coreHp < 0) s.coreHp = 0;
+    if (s.coreHp <= 0 && s.phase !== 'lost') {
+      s.coreHp = 0;
+      R.endRun(s, false);
+      return;
+    }
 
     if (s.phase === 'wave' && R.enemies.waveComplete(s)) R.finishWave(s);
   };
@@ -220,7 +264,7 @@
     }
 
     R.loadMeta();
-    var s = R.newRun();
+    var s = R.titleRun();
 
     R.ui.init();
     R.render.applyLayout();
@@ -233,6 +277,9 @@
     if (R.debug) R.debug.install();
 
     installFavicon();
+
+    /* A page opened in a background tab starts paused rather than silently idle. */
+    if (document.hidden) onVisibility();
 
     global.addEventListener('resize', queueLayout, { passive: true });
     global.addEventListener('orientationchange', queueLayout, { passive: true });

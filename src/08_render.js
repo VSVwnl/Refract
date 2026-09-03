@@ -831,7 +831,8 @@
       triangles: renderer.info.render.triangles,
       geometries: renderer.info.memory.geometries,
       textures: renderer.info.memory.textures,
-      programs: renderer.info.programs ? renderer.info.programs.length : 0
+      programs: renderer.info.programs ? renderer.info.programs.length : 0,
+      objects: scene ? scene.children.length : 0
     };
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -2778,7 +2778,8 @@ body.wide #sideNote { display: block; }
       triangles: renderer.info.render.triangles,
       geometries: renderer.info.memory.geometries,
       textures: renderer.info.memory.textures,
-      programs: renderer.info.programs ? renderer.info.programs.length : 0
+      programs: renderer.info.programs ? renderer.info.programs.length : 0,
+      objects: scene ? scene.children.length : 0
     };
   };
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -3010,6 +3011,185 @@ body.wide #sideNote { display: block; }
     mirror: 'Mirror', splitter: 'Splitter', reflector: 'Reflector', lamp: 'Lamp'
   };
 
+
+  /* ---------- overlays ---------- */
+
+  var overlayKind = null;
+
+  function node(tag, cls, html) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (html !== undefined) n.innerHTML = html;
+    return n;
+  }
+
+  function button(cls, label, onClick) {
+    var b = node('button', cls, label);
+    b.type = 'button';
+    b.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      onClick();
+    });
+    return b;
+  }
+
+  function openOverlay(kind, build) {
+    overlayKind = kind;
+    el.overlayRoot.innerHTML = '';
+    var wrap = node('div', 'overlay');
+    build(wrap);
+    el.overlayRoot.appendChild(wrap);
+    el.overlayRoot.classList.add('on');
+    return wrap;
+  }
+
+  function closeOverlay() {
+    overlayKind = null;
+    el.overlayRoot.innerHTML = '';
+    el.overlayRoot.classList.remove('on');
+  }
+
+  function bestLine() {
+    return R.meta.best > 0 ? '<p class="tag">BEST ' + R.meta.best + '</p>' : '';
+  }
+
+  function buildTitle(wrap) {
+    wrap.appendChild(node('h1', null, 'REFRACT'));
+    wrap.appendChild(node('p', 'tag', 'Bend the light. Burn the shadows.'));
+    var rows = node('div', 'rows');
+    rows.appendChild(node('div', 'row', '<b>&#9670;</b> Your core fires one beam of light. Shadows walking the road burn in it.'));
+    rows.appendChild(node('div', 'row', '<b>&#9655;</b> Tap a tile to place a mirror and bend the beam along the road.'));
+    rows.appendChild(node('div', 'row', '<b>&#8635;</b> Tap a placed piece to flip, move or sell it. Survive twelve waves.'));
+    wrap.appendChild(rows);
+    if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
+    wrap.appendChild(button('bigbtn', 'PLAY', function () { R.startRun(); }));
+    wrap.appendChild(node('p', 'note', 'Portrait &middot; single player &middot; works offline'));
+  }
+
+  function buildPause(wrap) {
+    wrap.appendChild(node('h2', null, 'PAUSED'));
+    wrap.appendChild(node('p', 'tag', 'Tap anywhere to resume'));
+    wrap.addEventListener('click', function () { R.resume(); });
+  }
+
+  /*
+   * The tip names whatever took the most core HP, which is what the player
+   * actually needs to solve, rather than the most numerous leaker.
+   */
+  var DEFEAT_TIPS = {
+    brute: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
+    bruteking: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
+    umbra: 'Umbra absorbs almost everything. Upgrade the core and light the long segments so it is burning for as long as possible.',
+    swarmling: 'Swarms drain a beam fast: each one takes a bite before the light reaches the next. Split the light, or add a Lamp as a second source.',
+    runner: 'Runners cross a single lit cell in half a second. Light a whole road segment lengthwise so they stay in the light.',
+    mote: 'Light along the road burns for the whole segment; light across it burns for one cell. Try to get LIT above 15.'
+  };
+
+  function defeatTip(s) {
+    var worst = null;
+    var worstHp = -1;
+    for (var type in s.leaksBy) {
+      var hp = s.leaksBy[type] * (B.ENEMY[type] ? B.ENEMY[type].leak : 1);
+      if (hp > worstHp) { worstHp = hp; worst = type; }
+    }
+    if (!worst || worstHp <= 0) return DEFEAT_TIPS.mote;
+    return DEFEAT_TIPS[worst] || DEFEAT_TIPS.mote;
+  }
+
+  function statLine(label, value) {
+    return node('p', 'statline', label + ' <b>' + value + '</b>');
+  }
+
+  function buildDefeat(wrap) {
+    var s = R.state;
+    var h = node('h2', null, 'THE CORE FELL');
+    h.style.color = '#ff5d6c';
+    wrap.appendChild(h);
+    wrap.appendChild(statLine('Reached wave', s.wave + ' of 12'));
+    wrap.appendChild(statLine('Score', s.score));
+    if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
+    wrap.appendChild(node('div', 'tip', defeatTip(s)));
+    wrap.appendChild(button('bigbtn', 'TRY AGAIN', function () { R.restartRun(); }));
+  }
+
+  function buildVictory(wrap) {
+    var s = R.state;
+    var h = node('h2', null, 'THE LIGHT HELD');
+    h.style.color = '#ffc247';
+    wrap.appendChild(h);
+    wrap.appendChild(statLine('Waves cleared', s.wavesCleared));
+    wrap.appendChild(statLine('Core HP left', s.coreHp + ' of ' + B.CORE_HP));
+    wrap.appendChild(statLine('Road lit', s.beam.litRoadCount + ' of ' + s.roadCells));
+    wrap.appendChild(statLine('Score', s.score));
+    if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
+    wrap.appendChild(button('bigbtn', 'PLAY AGAIN', function () { R.restartRun(); }));
+    if (R.continueEndless) {
+      wrap.appendChild(button('bigbtn ghost', 'CONTINUE &mdash; ENDLESS', function () { R.continueEndless(); }));
+    }
+  }
+
+  /* Rebuild only when the phase changes, so overlays do not flicker. */
+  ui.syncOverlay = function (s) {
+    var want = null;
+    if (s.phase === 'title') want = 'title';
+    else if (s.phase === 'paused') want = 'pause';
+    else if (s.phase === 'lost') want = 'lost';
+    else if (s.phase === 'won') want = 'won';
+
+    if (want === overlayKind) return;
+    if (!want) {
+      closeOverlay();
+      return;
+    }
+    if (want === 'title') openOverlay('title', buildTitle);
+    else if (want === 'pause') openOverlay('pause', buildPause);
+    else if (want === 'lost') openOverlay('lost', buildDefeat);
+    else if (want === 'won') openOverlay('won', buildVictory);
+  };
+
+  ui.overlayKind = function () {
+    return overlayKind;
+  };
+
+  /* ---------- HUD buttons ---------- */
+
+  function bindHudButtons() {
+    el.btnPause.addEventListener('click', function () {
+      var s = R.state;
+      if (s.phase === 'paused') R.resume();
+      else R.pause();
+    });
+    el.btnNext.addEventListener('click', function () {
+      var s = R.state;
+      if (s.phase === 'building') R.callWaveEarly(s);
+    });
+    el.btnSpeed.addEventListener('click', function () {
+      var s = R.state;
+      var opts = B.SPEED_OPTIONS;
+      var i = opts.indexOf(s.speed);
+      s.speed = opts[(i + 1) % opts.length];
+    });
+  }
+
+  function syncHudButtons(s) {
+    var speedLabel = s.speed + '×';
+    if (cache.speed !== speedLabel) {
+      cache.speed = speedLabel;
+      el.btnSpeed.textContent = speedLabel;
+      el.btnSpeed.classList.toggle('on', s.speed !== 1);
+    }
+    var paused = s.phase === 'paused';
+    if (cache.paused !== paused) {
+      cache.paused = paused;
+      el.btnPause.classList.toggle('playing', paused);
+    }
+    var showNext = s.phase === 'building';
+    if (cache.showNext !== showNext) {
+      cache.showNext = showNext;
+      el.btnNext.hidden = !showNext;
+    }
+  }
+
   /* ---------- lifecycle ---------- */
 
   ui.init = function () {
@@ -3026,6 +3206,17 @@ body.wide #sideNote { display: block; }
     el.litSub = key(el.statLit.querySelector('.sub'), 'litSub');
     el.strip = byId('strip');
     el.stripText = key(byId('stripText'), 'strip');
+    el.overlayRoot = byId('overlayRoot');
+    el.btnPause = byId('btnPause');
+    el.btnSpeed = byId('btnSpeed');
+    el.btnHelp = byId('btnHelp');
+    el.btnMute = byId('btnMute');
+    el.btnCore = byId('btnCore');
+    el.btnNext = byId('btnNext');
+    el.palette = byId('palette');
+    /* The core upgrade arrives with the rest of the economy in a later phase. */
+    el.btnCore.hidden = true;
+    bindHudButtons();
 
     for (var i = 0; i < FLOATER_POOL; i++) floaters.push(makeFloater());
     ui.el = el;
@@ -3036,6 +3227,8 @@ body.wide #sideNote { display: block; }
     stepFloaters(dtReal);
     ui.handleEvents(s);
     ui.update(s);
+    syncHudButtons(s);
+    ui.syncOverlay(s);
   };
 
   ui.reset = function () {
@@ -3043,6 +3236,8 @@ body.wide #sideNote { display: block; }
     cache = {};
     stripNotice = '';
     stripNoticeUntil = 0;
+    overlayKind = null;
+    if (el.overlayRoot) closeOverlay();
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -3234,13 +3429,43 @@ body.wide #sideNote { display: block; }
     if (R.state) R.enemies.releaseAll(R.state);
     var s = R.resetState(seed === undefined ? (Date.now() & 0x7fffffff) : seed);
     R.state = s;
-    /* The board is live from the first frame; the title screen arrives in a later phase. */
-    s.phase = 'building';
     R.beam.recompute(s);
     if (R.ui.reset) R.ui.reset();
     if (R.input.cancel) R.input.cancel();
     accumulator = 0;
     return s;
+  };
+
+  /* A fresh run that opens on the title card. */
+  R.titleRun = function (seed) {
+    var s = R.newRun(seed);
+    s.phase = 'title';
+    return s;
+  };
+
+  /* Leave the title card and start playing. */
+  R.startRun = function () {
+    var s = R.state;
+    if (s.phase !== 'title') return;
+    s.phase = 'building';
+    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
+    R.emit(s, 'runstart', {});
+  };
+
+  /* Straight back to the board: the title card is only shown on first load. */
+  R.restartRun = function (seed) {
+    var s = R.newRun(seed);
+    s.phase = 'building';
+    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
+    R.emit(s, 'runstart', {});
+    return s;
+  };
+
+  R.endRun = function (s, won) {
+    s.score = R.computeScore(s);
+    s.phase = won ? 'won' : 'lost';
+    R.saveBest(s.score);
+    R.emit(s, won ? 'win' : 'lose', { score: s.score, wave: s.wave });
   };
 
   /* ---------- wave flow ---------- */
@@ -3266,12 +3491,22 @@ body.wide #sideNote { display: block; }
     R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
   };
 
+  /* Starting a wave early trades building time for gold (bonus added later). */
+  R.callWaveEarly = function (s) {
+    if (s.phase !== 'building') return;
+    R.startWave(s);
+  };
+
   R.finishWave = function (s) {
     var bonus = R.BALANCE.WAVE_CLEAR_BASE + R.BALANCE.WAVE_CLEAR_PER_WAVE * s.wave;
     s.wavesCleared++;
     s.gold += bonus;
     s.goldEarned += bonus;
     R.emit(s, 'waveclear', { wave: s.wave, bonus: bonus });
+    if (!s.endless && s.wave >= R.BALANCE.WAVES.length) {
+      R.endRun(s, true);
+      return;
+    }
     s.phase = 'building';
     s.countdown = R.BALANCE.COUNTDOWN;
     R.applyUnlocks(s, s.wave + 1);
@@ -3301,7 +3536,11 @@ body.wide #sideNote { display: block; }
     R.beam.solve(s, R.enemies.occupancy(s), dt, s.beam);
     R.enemies.resolveStep(s);
 
-    if (s.coreHp < 0) s.coreHp = 0;
+    if (s.coreHp <= 0 && s.phase !== 'lost') {
+      s.coreHp = 0;
+      R.endRun(s, false);
+      return;
+    }
 
     if (s.phase === 'wave' && R.enemies.waveComplete(s)) R.finishWave(s);
   };
@@ -3376,7 +3615,7 @@ body.wide #sideNote { display: block; }
     }
 
     R.loadMeta();
-    var s = R.newRun();
+    var s = R.titleRun();
 
     R.ui.init();
     R.render.applyLayout();
@@ -3389,6 +3628,9 @@ body.wide #sideNote { display: block; }
     if (R.debug) R.debug.install();
 
     installFavicon();
+
+    /* A page opened in a background tab starts paused rather than silently idle. */
+    if (document.hidden) onVisibility();
 
     global.addEventListener('resize', queueLayout, { passive: true });
     global.addEventListener('orientationchange', queueLayout, { passive: true });
@@ -3501,6 +3743,34 @@ body.wide #sideNote { display: block; }
           s.events.length = 0;
         }
         return s.time;
+      },
+
+      forceWin: function () {
+        var s = R.state;
+        s.wave = R.BALANCE.WAVES.length;
+        s.wavesCleared = s.wave;
+        R.endRun(s, true);
+        return s.phase;
+      },
+
+      forceLose: function () {
+        var s = R.state;
+        s.coreHp = 0;
+        R.endRun(s, false);
+        return s.phase;
+      },
+
+      killAll: function () {
+        var s = R.state;
+        for (var i = 0; i < s.enemies.length; i++) s.enemies[i].hp = 0;
+        R.enemies.resolveStep(s);
+        return s.enemies.length;
+      },
+
+      spawn: function (type, n) {
+        var s = R.state;
+        for (var i = 0; i < (n || 1); i++) R.enemies.spawn(s, type);
+        return s.enemies.length;
       },
 
       nextWave: function () {

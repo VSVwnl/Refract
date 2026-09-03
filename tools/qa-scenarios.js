@@ -262,4 +262,168 @@ module.exports = function (S) {
     ctx.check(info.calls <= 150, 'draw calls in budget: ' + info.calls);
   };
 
+  /* Phase 3: title, defeat, victory, pause and restart parity. */
+  S.runstates = async function (ctx) {
+    const snap = function () { return ctx.snapshot(); };
+    const until = function (src, max) {
+      return ctx.ev(function (a) { return window.__REFRACT.stepUntil(a[0], a[1]); }, [src, max || 300]);
+    };
+    const overlay = function () {
+      return ctx.ev(function () {
+        const o = document.querySelector('#overlayRoot .overlay');
+        return o ? o.textContent.replace(/\s+/g, ' ').trim() : null;
+      });
+    };
+
+    /* --- title --- */
+    ctx.eq(await ctx.ev(function () { return R.state.phase; }), 'title', 'opens on the title card');
+    const title = await overlay();
+    ctx.check(title.indexOf('REFRACT') === 0, 'title shows the wordmark');
+    ctx.check(title.indexOf('PLAY') >= 0, 'title has a PLAY button');
+    await ctx.snap('a-title');
+
+    const fresh = await ctx.ev(function () { return R.render.info(); });
+    ctx.log('  fresh render info ' + JSON.stringify(fresh));
+
+    await ctx.tap('#overlayRoot .bigbtn');
+    let m = await snap();
+    ctx.eq(m.phase, 'building', 'PLAY starts the run');
+    ctx.near(m.countdown, 10, 0.4, 'first countdown');
+    ctx.eq(await overlay(), null, 'the overlay is gone');
+
+    /* --- lose for real, by placing nothing --- */
+    await ctx.ev(function () { window.__REFRACT.freeze(true); });
+    await until('s.phase === "lost"', 900);
+    m = await snap();
+    ctx.eq(m.phase, 'lost', 'the core falls when nothing is placed');
+    ctx.eq(m.coreHp, 0, 'core hp is zero');
+    ctx.check(m.wave >= 2 && m.wave <= 4, 'placing nothing loses by wave 3 or 4 (reached wave ' + m.wave + ')');
+    const defeat = await overlay();
+    ctx.check(defeat.indexOf('THE CORE FELL') >= 0, 'defeat overlay');
+    ctx.check(defeat.indexOf('TRY AGAIN') >= 0, 'defeat has TRY AGAIN');
+    ctx.check(defeat.indexOf('Score') >= 0, 'defeat shows the score');
+    ctx.log('  defeat overlay: ' + defeat);
+    await ctx.snap('b-defeat');
+
+    const before = await ctx.ev(function () { return R.state.pieces.size; });
+    await ctx.tapCell(5, 5);
+    ctx.eq(await ctx.ev(function () { return R.state.pieces.size; }), before, 'the board ignores taps after a loss');
+
+    /* --- restart is pristine --- */
+    await ctx.tap('#overlayRoot .bigbtn');
+    m = await snap();
+    ctx.eq(m.phase, 'building', 'TRY AGAIN goes straight back to the board');
+    ctx.eq(m.gold, 40, 'gold reset');
+    ctx.eq(m.coreHp, 20, 'core hp reset');
+    ctx.eq(m.wave, 0, 'wave reset');
+    ctx.eq(m.lit, 1, 'beam reset to one lit cell');
+    ctx.eq(m.pieces.length, 0, 'no pieces');
+    ctx.eq(m.enemies, 0, 'no enemies');
+    ctx.eq(m.leaksBy.mote + m.leaksBy.runner + m.leaksBy.brute, 0, 'leak tally reset');
+    ctx.eq(m.unlocked.splitter, false, 'unlocks reset');
+
+    /* --- victory --- */
+    await ctx.ev(function () {
+      window.__REFRACT.setGold(999);
+      window.__REFRACT.place('mirror', 7, 3);
+      window.__REFRACT.forceWin();
+    });
+    m = await snap();
+    ctx.eq(m.phase, 'won', 'forced victory');
+    const vic = await overlay();
+    ctx.check(vic.indexOf('THE LIGHT HELD') >= 0, 'victory overlay');
+    ctx.check(vic.indexOf('PLAY AGAIN') >= 0, 'victory has PLAY AGAIN');
+    ctx.check(vic.indexOf('CONTINUE') < 0, 'endless is not offered yet');
+    ctx.check(await ctx.ev(function () { return R.meta.best > 0; }), 'best score was stored');
+    await ctx.snap('c-victory');
+
+    await ctx.tap('#overlayRoot .bigbtn');
+    m = await snap();
+    ctx.eq(m.phase, 'building', 'PLAY AGAIN restarts');
+    ctx.eq(m.pieces.length, 0, 'victory restart is clean');
+
+    /* --- five consecutive restarts leave no residue --- */
+    const shots = [];
+    for (let i = 0; i < 5; i++) {
+      await ctx.ev(function () {
+        window.__REFRACT.setGold(400);
+        window.__REFRACT.place('mirror', 7, 3);
+        window.__REFRACT.place('mirror', 0, 3);
+        window.__REFRACT.nextWave();
+        window.__REFRACT.step(6);
+        R.restartRun(55);
+      });
+      await ctx.page.waitForTimeout(60);
+      const sn = await snap();
+      delete sn.time;
+      delete sn.countdown;
+      delete sn.render;
+      shots.push(JSON.stringify(sn));
+    }
+    ctx.check(shots.every(function (x) { return x === shots[0]; }), 'five restarts produce identical snapshots');
+    const after = await ctx.ev(function () { return R.render.info(); });
+    ctx.eq(after.geometries, fresh.geometries, 'geometry count unchanged after restarts');
+    ctx.eq(after.textures, fresh.textures, 'texture count unchanged after restarts');
+    ctx.eq(after.objects, fresh.objects, 'scene object count unchanged after restarts');
+    ctx.log('  after restarts ' + JSON.stringify(after));
+
+    /* --- pause freezes the wave --- */
+    await ctx.ev(function () {
+      R.restartRun(77);
+      window.__REFRACT.setGold(400);
+      window.__REFRACT.place('mirror', 7, 3);
+      window.__REFRACT.nextWave();
+      window.__REFRACT.step(4);
+    });
+    const t0 = await ctx.ev(function () {
+      R.pause();
+      const s = R.state;
+      return { phase: s.phase, t: s.time, foes: s.enemies.length, pos: s.enemies.length ? s.enemies[0].t : 0 };
+    });
+    ctx.eq(t0.phase, 'paused', 'pause works during a wave');
+    ctx.check(t0.foes > 0, 'enemies are on the board');
+    await ctx.page.waitForTimeout(600);
+    const t1 = await ctx.ev(function () {
+      const s = R.state;
+      return { t: s.time, pos: s.enemies.length ? s.enemies[0].t : 0 };
+    });
+    ctx.eq(t1.t, t0.t, 'the clock is frozen while paused');
+    ctx.eq(t1.pos, t0.pos, 'enemies do not advance while paused');
+    const pauseText = await overlay();
+    ctx.check(pauseText && pauseText.indexOf('PAUSED') >= 0, 'paused overlay');
+    await ctx.snap('d-paused');
+
+    await ctx.tap('#overlayRoot .overlay');
+    ctx.eq(await ctx.ev(function () { return R.state.phase; }), 'wave', 'tapping the overlay resumes');
+
+    /* --- hiding the tab pauses --- */
+    await ctx.ev(function () {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: function () { return true; } });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    ctx.eq(await ctx.ev(function () { return R.state.phase; }), 'paused', 'hiding the tab pauses the game');
+    await ctx.ev(function () {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: function () { return false; } });
+      document.dispatchEvent(new Event('visibilitychange'));
+      R.resume();
+    });
+
+    /* --- all twelve waves are wired from the data --- */
+    const waves = await ctx.ev(function () {
+      const out = [];
+      for (let w = 1; w <= 12; w++) {
+        const q = R.enemies.buildQueue(w);
+        const counts = {};
+        q.forEach(function (x) { counts[x.type] = (counts[x.type] || 0) + 1; });
+        out.push({ w: w, n: q.length, counts: counts, last: Math.round(q[q.length - 1].at * 10) / 10 });
+      }
+      return out;
+    });
+    ctx.log('  waves: ' + JSON.stringify(waves));
+    ctx.eq(waves[0].n, 4, 'wave 1 has four enemies');
+    ctx.eq(waves[9].counts.bruteking, 1, 'wave 10 has the Brute King');
+    ctx.eq(waves[11].counts.umbra, 1, 'wave 12 has Umbra');
+    ctx.eq(waves[10].n, 30, 'wave 11 has thirty enemies');
+  };
+
 };

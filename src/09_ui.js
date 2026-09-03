@@ -218,6 +218,185 @@
     mirror: 'Mirror', splitter: 'Splitter', reflector: 'Reflector', lamp: 'Lamp'
   };
 
+
+  /* ---------- overlays ---------- */
+
+  var overlayKind = null;
+
+  function node(tag, cls, html) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (html !== undefined) n.innerHTML = html;
+    return n;
+  }
+
+  function button(cls, label, onClick) {
+    var b = node('button', cls, label);
+    b.type = 'button';
+    b.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      onClick();
+    });
+    return b;
+  }
+
+  function openOverlay(kind, build) {
+    overlayKind = kind;
+    el.overlayRoot.innerHTML = '';
+    var wrap = node('div', 'overlay');
+    build(wrap);
+    el.overlayRoot.appendChild(wrap);
+    el.overlayRoot.classList.add('on');
+    return wrap;
+  }
+
+  function closeOverlay() {
+    overlayKind = null;
+    el.overlayRoot.innerHTML = '';
+    el.overlayRoot.classList.remove('on');
+  }
+
+  function bestLine() {
+    return R.meta.best > 0 ? '<p class="tag">BEST ' + R.meta.best + '</p>' : '';
+  }
+
+  function buildTitle(wrap) {
+    wrap.appendChild(node('h1', null, 'REFRACT'));
+    wrap.appendChild(node('p', 'tag', 'Bend the light. Burn the shadows.'));
+    var rows = node('div', 'rows');
+    rows.appendChild(node('div', 'row', '<b>&#9670;</b> Your core fires one beam of light. Shadows walking the road burn in it.'));
+    rows.appendChild(node('div', 'row', '<b>&#9655;</b> Tap a tile to place a mirror and bend the beam along the road.'));
+    rows.appendChild(node('div', 'row', '<b>&#8635;</b> Tap a placed piece to flip, move or sell it. Survive twelve waves.'));
+    wrap.appendChild(rows);
+    if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
+    wrap.appendChild(button('bigbtn', 'PLAY', function () { R.startRun(); }));
+    wrap.appendChild(node('p', 'note', 'Portrait &middot; single player &middot; works offline'));
+  }
+
+  function buildPause(wrap) {
+    wrap.appendChild(node('h2', null, 'PAUSED'));
+    wrap.appendChild(node('p', 'tag', 'Tap anywhere to resume'));
+    wrap.addEventListener('click', function () { R.resume(); });
+  }
+
+  /*
+   * The tip names whatever took the most core HP, which is what the player
+   * actually needs to solve, rather than the most numerous leaker.
+   */
+  var DEFEAT_TIPS = {
+    brute: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
+    bruteking: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
+    umbra: 'Umbra absorbs almost everything. Upgrade the core and light the long segments so it is burning for as long as possible.',
+    swarmling: 'Swarms drain a beam fast: each one takes a bite before the light reaches the next. Split the light, or add a Lamp as a second source.',
+    runner: 'Runners cross a single lit cell in half a second. Light a whole road segment lengthwise so they stay in the light.',
+    mote: 'Light along the road burns for the whole segment; light across it burns for one cell. Try to get LIT above 15.'
+  };
+
+  function defeatTip(s) {
+    var worst = null;
+    var worstHp = -1;
+    for (var type in s.leaksBy) {
+      var hp = s.leaksBy[type] * (B.ENEMY[type] ? B.ENEMY[type].leak : 1);
+      if (hp > worstHp) { worstHp = hp; worst = type; }
+    }
+    if (!worst || worstHp <= 0) return DEFEAT_TIPS.mote;
+    return DEFEAT_TIPS[worst] || DEFEAT_TIPS.mote;
+  }
+
+  function statLine(label, value) {
+    return node('p', 'statline', label + ' <b>' + value + '</b>');
+  }
+
+  function buildDefeat(wrap) {
+    var s = R.state;
+    var h = node('h2', null, 'THE CORE FELL');
+    h.style.color = '#ff5d6c';
+    wrap.appendChild(h);
+    wrap.appendChild(statLine('Reached wave', s.wave + ' of 12'));
+    wrap.appendChild(statLine('Score', s.score));
+    if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
+    wrap.appendChild(node('div', 'tip', defeatTip(s)));
+    wrap.appendChild(button('bigbtn', 'TRY AGAIN', function () { R.restartRun(); }));
+  }
+
+  function buildVictory(wrap) {
+    var s = R.state;
+    var h = node('h2', null, 'THE LIGHT HELD');
+    h.style.color = '#ffc247';
+    wrap.appendChild(h);
+    wrap.appendChild(statLine('Waves cleared', s.wavesCleared));
+    wrap.appendChild(statLine('Core HP left', s.coreHp + ' of ' + B.CORE_HP));
+    wrap.appendChild(statLine('Road lit', s.beam.litRoadCount + ' of ' + s.roadCells));
+    wrap.appendChild(statLine('Score', s.score));
+    if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
+    wrap.appendChild(button('bigbtn', 'PLAY AGAIN', function () { R.restartRun(); }));
+    if (R.continueEndless) {
+      wrap.appendChild(button('bigbtn ghost', 'CONTINUE &mdash; ENDLESS', function () { R.continueEndless(); }));
+    }
+  }
+
+  /* Rebuild only when the phase changes, so overlays do not flicker. */
+  ui.syncOverlay = function (s) {
+    var want = null;
+    if (s.phase === 'title') want = 'title';
+    else if (s.phase === 'paused') want = 'pause';
+    else if (s.phase === 'lost') want = 'lost';
+    else if (s.phase === 'won') want = 'won';
+
+    if (want === overlayKind) return;
+    if (!want) {
+      closeOverlay();
+      return;
+    }
+    if (want === 'title') openOverlay('title', buildTitle);
+    else if (want === 'pause') openOverlay('pause', buildPause);
+    else if (want === 'lost') openOverlay('lost', buildDefeat);
+    else if (want === 'won') openOverlay('won', buildVictory);
+  };
+
+  ui.overlayKind = function () {
+    return overlayKind;
+  };
+
+  /* ---------- HUD buttons ---------- */
+
+  function bindHudButtons() {
+    el.btnPause.addEventListener('click', function () {
+      var s = R.state;
+      if (s.phase === 'paused') R.resume();
+      else R.pause();
+    });
+    el.btnNext.addEventListener('click', function () {
+      var s = R.state;
+      if (s.phase === 'building') R.callWaveEarly(s);
+    });
+    el.btnSpeed.addEventListener('click', function () {
+      var s = R.state;
+      var opts = B.SPEED_OPTIONS;
+      var i = opts.indexOf(s.speed);
+      s.speed = opts[(i + 1) % opts.length];
+    });
+  }
+
+  function syncHudButtons(s) {
+    var speedLabel = s.speed + '×';
+    if (cache.speed !== speedLabel) {
+      cache.speed = speedLabel;
+      el.btnSpeed.textContent = speedLabel;
+      el.btnSpeed.classList.toggle('on', s.speed !== 1);
+    }
+    var paused = s.phase === 'paused';
+    if (cache.paused !== paused) {
+      cache.paused = paused;
+      el.btnPause.classList.toggle('playing', paused);
+    }
+    var showNext = s.phase === 'building';
+    if (cache.showNext !== showNext) {
+      cache.showNext = showNext;
+      el.btnNext.hidden = !showNext;
+    }
+  }
+
   /* ---------- lifecycle ---------- */
 
   ui.init = function () {
@@ -234,6 +413,17 @@
     el.litSub = key(el.statLit.querySelector('.sub'), 'litSub');
     el.strip = byId('strip');
     el.stripText = key(byId('stripText'), 'strip');
+    el.overlayRoot = byId('overlayRoot');
+    el.btnPause = byId('btnPause');
+    el.btnSpeed = byId('btnSpeed');
+    el.btnHelp = byId('btnHelp');
+    el.btnMute = byId('btnMute');
+    el.btnCore = byId('btnCore');
+    el.btnNext = byId('btnNext');
+    el.palette = byId('palette');
+    /* The core upgrade arrives with the rest of the economy in a later phase. */
+    el.btnCore.hidden = true;
+    bindHudButtons();
 
     for (var i = 0; i < FLOATER_POOL; i++) floaters.push(makeFloater());
     ui.el = el;
@@ -244,6 +434,8 @@
     stepFloaters(dtReal);
     ui.handleEvents(s);
     ui.update(s);
+    syncHudButtons(s);
+    ui.syncOverlay(s);
   };
 
   ui.reset = function () {
@@ -251,5 +443,7 @@
     cache = {};
     stripNotice = '';
     stripNoticeUntil = 0;
+    overlayKind = null;
+    if (el.overlayRoot) closeOverlay();
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -205,3 +205,47 @@ Screenshots `shots/waves-390x844-a-wave1-running.png` through `-e-absorption-zoo
 **Result:** 26 Node tests and 31 browser checks pass. Waves 1 to 3 play end to end with correct gold and HP arithmetic, and absorption ordering is visible on screen.
 
 **Next step:** Phase 3 — title screen, win, lose, pause and a residue-free restart.
+
+
+### Session 1 — 2026-09-03 — Phase 3: win, lose, restart
+
+**Goal:** Full run structure: phases, title screen, victory and defeat overlays, pause, and a restart that leaves no residue.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 3.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile-emulation tests.
+
+**Work completed:**
+
+- Phase machine in `src/11_game.js`: `titleRun` (opens on the title card), `startRun` (PLAY), `restartRun` (straight back to the board, no title card), `endRun` (score, best score, phase), the loss check inside the fixed step, and victory when wave 12 clears while not in endless.
+- Overlay system in `src/09_ui.js`, rebuilt only when the phase changes: title (wordmark, tagline, three control lines, best score, PLAY, and the "Portrait / single player / works offline" note), pause ("PAUSED — tap anywhere to resume"), defeat and victory. All overlay buttons are real DOM buttons.
+- Defeat tips chosen by cause. The spec says "most leaks by X"; the implementation attributes by **core HP lost** per type rather than leak count, because a single Brute leak costs 3 HP and a swarmling leak costs 1, and the player needs to solve whatever actually killed them. Recorded here as a deliberate refinement.
+- Score `goldEarned + 50 x wavesCleared + 10 x coreHp`, with best score written through the guarded `localStorage` helpers.
+- HUD buttons: pause (toggles, icon flips to a play triangle) and the 1x/2x speed toggle. NEXT WAVE starts the wave immediately; its gold bonus and label arrive in Phase 6. The CORE button is hidden until Phase 4 rather than sitting on screen doing nothing. Help and mute are wired in Phases 6 and 9.
+- A page opened in a hidden tab now pauses at boot instead of sitting in a running phase that never ticks.
+- Debug additions: `forceWin`, `forceLose`, `killAll`, `spawn`; `R.render.info()` also reports the scene object count so restart residue can be measured.
+
+**Browser testing:** `node tools/qa.js runstates` at 390x844. 44 checks, all passing:
+
+- Opens on the title card; PLAY starts the run with a 10 s countdown and the overlay closes.
+- Placing nothing loses for real at **wave 3**, which matches the spec's tuning target. Defeat overlay shows "Reached wave 3 of 12", score 133, best 133 and the coverage tip. The board ignores taps once the result is up.
+- TRY AGAIN returns to a pristine board: gold 40, HP 20, wave 0, LIT 1/25, no pieces, no enemies, leak tally zero, unlocks reset.
+- Forced victory shows "THE LIGHT HELD" with PLAY AGAIN and **no** CONTINUE button (endless arrives in Phase 5); best score is stored.
+- Five consecutive restarts after building pieces and running part of a wave produce byte-identical snapshots, and `renderer.info` is unchanged: 20 geometries, 5 textures, 24 scene objects, 25 draw calls, both before and after.
+- Pause during a wave freezes the clock and the enemies exactly (time 4.0333 and enemy progress 3.0333 before and after a 600 ms wait); the overlay reads PAUSED and tapping it resumes.
+- Overriding `document.hidden` and firing `visibilitychange` pauses the game.
+- All twelve waves build from the data with the right counts: wave 1 four motes, wave 6 sixteen swarmlings plus four runners, wave 10 the Brute King plus eight runners, wave 11 thirty enemies, wave 12 six motes, four brutes and Umbra.
+
+Screenshots `shots/runstates-390x844-a-title.png`, `-b-defeat.png`, `-c-victory.png`, `-d-paused.png` reviewed. Console: no messages from our code. Network: two requests.
+
+**Problems found:** One tooling failure rather than a game bug: a long shell heredoc silently failed to run, so a patch that added `forceWin` to the debug tools was never applied and the scenario threw. Fixed by writing large patches to a file and splicing them in, which is now the standard way this session edits big blocks.
+
+**Fixes:** As above. No gameplay defects were found in this phase.
+
+**Decisions locked:** No changes to Part 1. Added: defeat tips are chosen by core HP lost per enemy type, not by leak count.
+
+**Balance changes:** none. Confirmed by measurement that a player who places nothing loses at wave 3, as the spec's difficulty target requires.
+
+**Result:** 26 Node tests and 44 browser checks pass. A complete run can be started, lost, restarted, won and restarted again, with no state or mesh residue across restarts.
+
+**Next step:** Phase 4 — the palette, the other three pieces, the action bar, drag-to-move, sell and undo, and core upgrades.

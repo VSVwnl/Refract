@@ -85,6 +85,34 @@
         return s.time;
       },
 
+      forceWin: function () {
+        var s = R.state;
+        s.wave = R.BALANCE.WAVES.length;
+        s.wavesCleared = s.wave;
+        R.endRun(s, true);
+        return s.phase;
+      },
+
+      forceLose: function () {
+        var s = R.state;
+        s.coreHp = 0;
+        R.endRun(s, false);
+        return s.phase;
+      },
+
+      killAll: function () {
+        var s = R.state;
+        for (var i = 0; i < s.enemies.length; i++) s.enemies[i].hp = 0;
+        R.enemies.resolveStep(s);
+        return s.enemies.length;
+      },
+
+      spawn: function (type, n) {
+        var s = R.state;
+        for (var i = 0; i < (n || 1); i++) R.enemies.spawn(s, type);
+        return s.enemies.length;
+      },
+
       nextWave: function () {
         if (R.state.phase === 'building') R.startWave(R.state);
         return R.state.wave;
