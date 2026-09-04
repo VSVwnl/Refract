@@ -517,3 +517,53 @@ Screenshots `shots/feel-390x844-a-death-burst.png` through `-g-defeat-gutter.png
 **Result:** 26 Node tests and 296 browser checks across twelve scenarios pass. Every row of section 23 has its feedback except sound, which is Phase 9.
 
 **Next step:** Phase 9 — synthesized audio.
+
+
+### Session 1 — 2026-09-04 — Phase 9: audio
+
+**Goal:** Synthesized sound that makes the beam feel physical, safely under browser autoplay rules.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 9 and section 24.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile-emulation tests.
+
+**Work completed:**
+
+- `src/02_audio.js`. No audio files: one shared master gain at 0.5, a half-second white-noise buffer generated at start-up, and every sound built from oscillators and filtered noise.
+- The context is created on the first `pointerdown`, `keydown` or `touchstart` and resumed on every later gesture if it is suspended. Everything is wrapped so that a missing or blocked `AudioContext` sets a flag and the rest of the module becomes a no-op.
+- Sixteen sounds: place, flip, sweep, sizzle, gold, three death pops (small, normal, big with a noise thud), leak thud, wave horn, wave-clear arpeggio, unlock sparkle, upgrade sweep, deny buzz, victory fanfare and defeat fall.
+- Beam hum: three detuned sawtooth oscillators at 55, 55.6 and 110 Hz through a 320 Hz low-pass, smoothed with `setTargetAtTime`, ducked to zero whenever the game is not running.
+- Voice cap of eight. When the cap is reached the quietest live voice is faded out and replaced, and a new sound quieter than everything playing is simply dropped.
+- Throttles: sizzle at most once every 150 ms, gold chime once every 100 ms. Pitch varies by up to 6 percent on hit and death sounds so repeats do not sound mechanical.
+- Mute toggle on the HUD button, persisted through the guarded storage helpers, with the strike-through icon state.
+- Debug additions `playAll()` and `audio()`.
+
+**Browser testing:** `node tools/qa.js audio` at 390x844, 23 checks passing, plus the full thirteen-scenario suite.
+
+Measurements:
+
+- Before any gesture: no context exists, and calling a sound returns false rather than throwing.
+- After the first tap the context is `running`; all sixteen sounds play without throwing.
+- Sixty rapid death sounds leave exactly 8 live voices.
+- Hum: LIT 1 gives 10 lit road power and a gain of 0.0030 (inaudible); LIT 12 at core level 6 gives 420 power and a gain of 0.0796, just under the 0.08 ceiling.
+- Mute mutes, stops sounds playing, shows on the button, writes `refract.muted`, and survives a reload.
+- With `AudioContext` deleted the game still runs: mirror placed, LIT 7, waves running.
+- With `localStorage` throwing on access the game still runs: mute still toggles in memory and the best score still tracks in memory.
+
+**Problems found:**
+
+1. The hum was audible at LIT 1 (gain 0.039). It was driven by `beam.totalPower`, which counts every cell the beam crosses — the untouched core beam crosses eleven cells of column 7 for 110 power even though only one road cell is lit.
+2. The wave-11 frame time in headless Chromium had crept from 33 to 50 ms after Phase 8.
+
+**Fixes:**
+
+1. The solver now also reports `litRoadPower`, the power falling on road cells only, and the hum is driven by that against a 260 ceiling. Measured 0.0030 at LIT 1 and 0.0796 at LIT 12 core 6.
+2. Investigated properly rather than guessed. A direct probe of `renderer.render` shows **0.18 ms per frame**, so rendering was never the cost; the 33 ms figure is headless Chromium clamping `requestAnimationFrame` to 30 Hz. While measuring, a real optimisation was found and applied: pooled instanced meshes were hiding unused instances with a zero-scale matrix, which still runs them through the vertex shader. `Filler.finish` now lowers `InstancedMesh.count` to the number actually written. **Draw calls at wave 11 fell from 33 to 22.**
+
+**Decisions locked:** No changes to Part 1.
+
+**Balance changes:** none.
+
+**Result:** 26 Node tests and 319 browser checks across thirteen scenarios pass. Audio works after a gesture, fails silently without one, and never throws. Rendering costs 0.18 ms a frame and the simulation 0.001 ms a step.
+
+**Next step:** Phase 10 — balancing against the targets in specification section 15.

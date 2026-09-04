@@ -248,6 +248,8 @@
     }
 
     R.render.handleEvents(s);
+    R.audio.handleEvents(s);
+    R.audio.frame(s);
     R.ui.frame(s, dtReal);
     R.render.draw(s, dtReal);
     if (R.debug) R.debug.frame(dtReal);
@@ -303,6 +305,7 @@
     }
     R.render.applyLayout();
     R.input.init();
+    R.audio.init();
     if (R.debug) R.debug.install();
 
     installFavicon();

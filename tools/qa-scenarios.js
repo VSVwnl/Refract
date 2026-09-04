@@ -943,6 +943,12 @@ module.exports = function (S) {
       };
     });
     ctx.log('  simulation cost at peak: ' + JSON.stringify(simCost));
+    const rasterCost = await st(function () {
+      const t0 = performance.now();
+      for (let i = 0; i < 30; i++) R.render.renderOnce();
+      return Math.round((performance.now() - t0) / 30 * 100) / 100;
+    });
+    ctx.log('  raw renderer cost per frame: ' + rasterCost + ' ms (software rasteriser in headless)');
     ctx.check(simCost.msPerStep < 2, 'a simulation step costs under 2 ms (' + simCost.msPerStep + ')');
 
     const perf = await st(function () {
@@ -1785,6 +1791,149 @@ module.exports = function (S) {
     ctx.check(peak.worst <= 400, 'particles stay within the 400 budget (' + peak.worst + ')');
     const calls = await st(function () { return R.render.info().calls; });
     ctx.check(calls <= 150, 'draw calls in budget: ' + calls);
+  };
+
+  /* Phase 9: synthesized audio, gesture gating and the mute toggle. */
+  S.audio = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const info = function () { return st(function () { return window.__REFRACT.audio(); }); };
+
+    /* --- nothing before a gesture, and no errors either --- */
+    const before = await st(function () {
+      return { available: R.audio.available(), state: R.audio.state(), played: R.audio.play('place') };
+    });
+    ctx.log('  before any gesture: ' + JSON.stringify(before));
+    ctx.eq(before.available, false, 'no audio context exists before a gesture');
+    ctx.eq(before.played, false, 'playing a sound before a gesture is a no-op, not an error');
+
+    /* --- the first tap starts audio --- */
+    await ctx.tap('#overlayRoot .bigbtn');
+    let a = await info();
+    ctx.log('  after the first tap: ' + JSON.stringify(a));
+    ctx.check(a.state === 'running' || a.state === 'suspended', 'a context exists after a gesture');
+    ctx.eq(a.muted, false, 'sound is on by default');
+
+    /* --- every sound plays without throwing --- */
+    const played = await st(function () {
+      const out = {};
+      R.audio.names.forEach(function (n) {
+        out[n] = R.audio.play(n);
+        /* let the voice cap recover between sounds */
+        R.audio.voiceCount();
+      });
+      return out;
+    });
+    const names = Object.keys(played);
+    ctx.log('  sounds: ' + names.join(', '));
+    ctx.check(names.length >= 14, 'the full sound set exists (' + names.length + ')');
+    ctx.check(names.every(function (n) { return played[n] === true; }),
+      'every sound plays: ' + JSON.stringify(played));
+
+    /* --- the voice cap holds under a burst --- */
+    const cap = await st(function () {
+      for (let i = 0; i < 60; i++) R.audio.play('kill');
+      return R.audio.voiceCount();
+    });
+    ctx.check(cap <= 8, 'at most eight voices at once (' + cap + ')');
+
+    /* --- the hum follows how much light is on the board --- */
+    const humQuiet = await st(function () {
+      window.__REFRACT.restart(5000);
+      const s = R.state;
+      R.audio.frame(s);
+      return { power: Math.round(s.beam.litRoadPower), hum: R.audio.humLevel() };
+    });
+    await ctx.page.waitForTimeout(500);
+    const humQuiet2 = await st(function () { return R.audio.humLevel(); });
+
+    const humLoud = await st(function () {
+      const s = R.state;
+      s.gold = 5000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      window.__REFRACT.place('mirror', 7, 3, 1);
+      window.__REFRACT.place('mirror', 0, 3, 0);
+      window.__REFRACT.place('mirror', 0, 10, 1);
+      for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+      R.audio.frame(s);
+      return { power: Math.round(s.beam.litRoadPower), lit: s.beam.litRoadCount };
+    });
+    await ctx.page.waitForTimeout(600);
+    const humLoud2 = await st(function () { return R.audio.humLevel(); });
+    ctx.log('  hum: LIT 1 power ' + humQuiet.power + ' gain ' + humQuiet2.toFixed(4) +
+      '  ->  LIT ' + humLoud.lit + ' power ' + humLoud.power + ' gain ' + humLoud2.toFixed(4));
+    ctx.check(humQuiet2 < 0.01, 'the hum is near silent with one lit cell');
+    ctx.check(humLoud2 > humQuiet2 * 4, 'the hum rises with a bright board');
+    ctx.check(humLoud2 <= 0.081, 'the hum never exceeds its ceiling');
+
+    /* --- mute --- */
+    await ctx.tap('#btnMute');
+    a = await info();
+    ctx.eq(a.muted, true, 'the mute button mutes');
+    ctx.eq(await st(function () { return R.audio.play('place'); }), false, 'muted sounds do not play');
+    ctx.check(await st(function () {
+      return document.getElementById('btnMute').classList.contains('muted');
+    }), 'the mute button shows its state');
+    ctx.eq(await st(function () { return localStorage.getItem('refract.muted'); }), '1', 'mute is stored');
+    await ctx.snap('a-muted');
+
+    /* --- mute survives a reload --- */
+    await ctx.page.reload({ waitUntil: 'load' });
+    await ctx.page.waitForFunction(function () { return window.R && R.render && R.render.ready; });
+    ctx.eq(await st(function () { return R.meta.muted; }), true, 'mute persists across a reload');
+    await ctx.tap('#overlayRoot .bigbtn');
+    await ctx.tap('#btnMute');
+    ctx.eq(await st(function () { return R.meta.muted; }), false, 'unmuting works and is stored');
+    ctx.eq(await st(function () { return localStorage.getItem('refract.muted'); }), '0', 'the stored flag is cleared');
+
+    /* --- the game survives audio being unavailable --- */
+    await ctx.page.addInitScript(function () {
+      window.AudioContext = undefined;
+      window.webkitAudioContext = undefined;
+    });
+    await ctx.page.reload({ waitUntil: 'load' });
+    await ctx.page.waitForFunction(function () { return window.R && R.render && R.render.ready; });
+    await ctx.tap('#overlayRoot .bigbtn');
+    const noAudio = await st(function () {
+      const s = R.state;
+      s.gold = 500;
+      window.__REFRACT.place('mirror', 7, 3, 1);
+      window.__REFRACT.nextWave();
+      window.__REFRACT.step(20);
+      return {
+        available: R.audio.available(),
+        state: R.audio.state(),
+        lit: s.beam.litRoadCount,
+        wave: s.wave,
+        phase: s.phase
+      };
+    });
+    ctx.log('  with no AudioContext: ' + JSON.stringify(noAudio));
+    ctx.eq(noAudio.available, false, 'no audio context when the API is missing');
+    ctx.eq(noAudio.lit, 7, 'the game plays on without audio');
+    ctx.check(noAudio.wave >= 1, 'waves still run without audio');
+
+    /* --- the game survives localStorage being unavailable --- */
+    await ctx.page.addInitScript(function () {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get: function () { throw new Error('storage blocked'); }
+      });
+    });
+    await ctx.page.reload({ waitUntil: 'load' });
+    await ctx.page.waitForFunction(function () { return window.R && R.render && R.render.ready; });
+    await ctx.tap('#overlayRoot .bigbtn');
+    const noStore = await st(function () {
+      const s = R.state;
+      s.gold = 500;
+      window.__REFRACT.place('mirror', 7, 3, 1);
+      R.audio.toggleMute();
+      R.saveBest(1234);
+      return { lit: s.beam.litRoadCount, muted: R.meta.muted, best: R.meta.best };
+    });
+    ctx.log('  with localStorage blocked: ' + JSON.stringify(noStore));
+    ctx.eq(noStore.lit, 7, 'the game plays on with storage blocked');
+    ctx.eq(noStore.muted, true, 'mute still toggles in memory');
+    ctx.eq(noStore.best, 1234, 'best score still tracks in memory');
   };
 
 };

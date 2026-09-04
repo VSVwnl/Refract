@@ -429,11 +429,12 @@
     var mesh = new THREE.InstancedMesh(geo, mat, count);
     mesh.frustumCulled = false;
     mesh.renderOrder = order || 0;
-    mesh.count = count;
+    /* Allocate the colour attribute up front, then draw nothing until filled. */
     for (var i = 0; i < count; i++) {
       mesh.setMatrixAt(i, hiddenMatrix);
       mesh.setColorAt(i, scratchColor.setHex(0xffffff));
     }
+    mesh.count = 0;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     scene.add(mesh);
@@ -467,9 +468,13 @@
     this.n++;
   };
 
+  /*
+   * Only the instances actually written are drawn. Lowering `count` rather than
+   * hiding the leftovers keeps unused instances out of the vertex shader.
+   */
   Filler.prototype.finish = function () {
     var mesh = this.mesh;
-    for (var i = this.n; i < mesh.instanceMatrix.count; i++) mesh.setMatrixAt(i, hiddenMatrix);
+    mesh.count = this.n;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.n = 0;
@@ -1369,6 +1374,11 @@
     rd.drawDynamic(state, dtReal);
 
     renderer.render(scene, camera);
+  };
+
+  /* Draw one frame without touching game state; used by performance probes. */
+  rd.renderOnce = function () {
+    if (rd.ready) renderer.render(scene, camera);
   };
 
   rd.info = function () {

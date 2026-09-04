@@ -43,6 +43,7 @@
       segCount: 0,
       lit: new Float32Array(CELLS),
       litRoadCount: 0,
+      litRoadPower: 0,
       totalPower: 0,
       overflow: false,
       version: 0
@@ -234,6 +235,7 @@
 
     out.segCount = 0;
     out.totalPower = 0;
+    out.litRoadPower = 0;
     out.overflow = false;
     out.lit.fill(0);
 
@@ -259,10 +261,15 @@
     }
 
     var litRoad = 0;
+    var litRoadPower = 0;
     for (var i = 0; i < CELLS; i++) {
-      if (out.lit[i] > 0 && (kind[i] === R.ROAD || kind[i] === R.SPAWN)) litRoad++;
+      if (out.lit[i] > 0 && (kind[i] === R.ROAD || kind[i] === R.SPAWN)) {
+        litRoad++;
+        litRoadPower += out.lit[i];
+      }
     }
     out.litRoadCount = litRoad;
+    out.litRoadPower = litRoadPower;
     out.version++;
 
     out = null;

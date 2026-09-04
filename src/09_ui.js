@@ -427,6 +427,10 @@
     el.btnCore.addEventListener('click', function () {
       R.pieces.upgradeCore(R.state);
     });
+    el.btnMute.addEventListener('click', function () {
+      R.audio.ensure();
+      R.audio.toggleMute();
+    });
     el.btnHelp.addEventListener('click', function () {
       if (R.state.ui.helpOpen) ui.closeHelp();
       else ui.openHelp();
@@ -445,6 +449,11 @@
       cache.speed = speedLabel;
       el.btnSpeed.textContent = speedLabel;
       el.btnSpeed.classList.toggle('on', s.speed !== 1);
+    }
+    if (cache.muted !== R.meta.muted) {
+      cache.muted = R.meta.muted;
+      el.btnMute.classList.toggle('muted', R.meta.muted);
+      el.btnMute.setAttribute('aria-label', R.meta.muted ? 'Sound off' : 'Sound on');
     }
     var paused = s.phase === 'paused';
     if (cache.paused !== paused) {

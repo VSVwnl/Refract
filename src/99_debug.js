@@ -90,6 +90,25 @@
         return s.time;
       },
 
+      /* Fire every sound in sequence so each can be heard once. */
+      playAll: function () {
+        R.audio.ensure();
+        var names = R.audio.names;
+        names.forEach(function (n, i) {
+          global.setTimeout(function () { R.audio.play(n); }, i * 450);
+        });
+        return names;
+      },
+
+      audio: function () {
+        return {
+          state: R.audio.state(),
+          muted: R.meta.muted,
+          voices: R.audio.voiceCount(),
+          hum: Math.round(R.audio.humLevel() * 10000) / 10000
+        };
+      },
+
       forceWin: function () {
         var s = R.state;
         s.wave = R.BALANCE.WAVES.length;
