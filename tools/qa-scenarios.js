@@ -701,6 +701,7 @@ module.exports = function (S) {
 
     /* --- affordability --- */
     await st(function () { window.__REFRACT.setGold(10); });
+    await ctx.page.waitForTimeout(80);
     const poor = await st(function () {
       return Array.prototype.map.call(document.querySelectorAll('#palette .pbtn'), function (b) {
         return b.classList.contains('poor');
@@ -740,12 +741,12 @@ module.exports = function (S) {
     });
     ctx.log('  hp scaling: ' + JSON.stringify(hp));
     ctx.eq(hp.mote1, 30, 'mote hp at wave 1');
-    ctx.eq(hp.mote5, 48, 'mote hp at wave 5 is 30 x 1.6');
-    ctx.eq(hp.mote8, 61, 'mote hp at wave 8 is 30 x 2.05, rounded');
-    ctx.eq(hp.mote12, 80, 'mote hp at wave 12 is 30 x 2.65, rounded');
-    ctx.eq(hp.king, 400, 'the Brute King ignores the wave multiplier');
+    ctx.eq(hp.mote5, 54, 'mote hp at wave 5 is 30 x 1.8');
+    ctx.eq(hp.mote8, 72, 'mote hp at wave 8 is 30 x 2.4');
+    ctx.eq(hp.mote12, 96, 'mote hp at wave 12 is 30 x 3.2');
+    ctx.eq(hp.king, 460, 'the Brute King ignores the wave multiplier');
     ctx.eq(hp.umbra, 900, 'Umbra ignores the wave multiplier');
-    ctx.eq(hp.brute12, 318, 'a wave 12 brute is scaled');
+    ctx.eq(hp.brute12, 384, 'a wave 12 brute is scaled');
 
     /* --- every type renders with its own shape --- */
     await st(function () {
@@ -864,7 +865,10 @@ module.exports = function (S) {
     const build = [
       ['mirror', 7, 3, 1],
       ['mirror', 0, 3, 0],
-      ['mirror', 0, 10, 1]
+      ['mirror', 0, 10, 1],
+      ['lamp', 2, 11, 0],
+      ['lamp', 1, 6, 1],
+      ['lamp', 1, 4, 0]
     ];
     const run = await st(function (b) {
       window.__REFRACT.restart(1500);
@@ -886,7 +890,7 @@ module.exports = function (S) {
     }, build);
     ctx.log('  victory run: lit ' + run.lit + '  phase ' + run.phase + '  hp ' + run.hp + '  score ' + run.score + '  sim time ' + run.time + 's');
     ctx.log('  per wave: ' + JSON.stringify(run.log));
-    ctx.eq(run.lit, 12, 'the concentrated build lights 12 of 25 road cells at full power');
+    ctx.eq(run.lit, 23, 'the winning build lights 23 of 25 road cells');
     ctx.eq(run.phase, 'won', 'twelve waves cleared');
     await ctx.snap('b-victory');
 
@@ -995,6 +999,12 @@ module.exports = function (S) {
       'concentrated 12': {
         core: 6,
         pieces: [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1]]
+      },
+
+      'three mirrors and three lamps': {
+        core: 6,
+        pieces: [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1],
+          ['lamp', 2, 11, 0], ['lamp', 1, 6, 1], ['lamp', 1, 4, 0]]
       },
       'concentrated + reflector': {
         core: 6,
@@ -1107,7 +1117,9 @@ module.exports = function (S) {
       return { before: before, bonus: bonus, after: s.gold, phase: s.phase, wave: s.wave };
     });
     ctx.log('  early call: ' + JSON.stringify(early));
-    ctx.eq(early.bonus, Math.ceil(early.before.countdown * 1.5), 'bonus is ceil(remaining x 1.5)');
+    const rate = await st(function () { return R.BALANCE.EARLY_CALL_RATE; });
+    ctx.eq(early.bonus, Math.ceil(early.before.countdown * rate),
+      'bonus is ceil(remaining x the early-call rate of ' + rate + ')');
     ctx.eq(early.after, early.before.gold + early.bonus, 'the bonus is paid');
     ctx.eq(early.phase, 'wave', 'the wave starts immediately');
     ctx.check(early.before.label.indexOf(String(early.bonus)) >= 0,
@@ -1223,7 +1235,7 @@ module.exports = function (S) {
     const order = await st(function () {
       return R.enemies.composition(12).map(function (g) { return g.type + 'x' + g.count; }).join(' ');
     });
-    ctx.eq(order, 'motex6 brutex2 umbrax1 brutex2', 'composition is listed in spawn order');
+    ctx.eq(order, 'motex6 brutex2 umbrax1 brutex2 runnerx6', 'composition is listed in spawn order');
   };
 
   /* Phase 7: portrait mobile UX at every target size. */
@@ -1934,6 +1946,215 @@ module.exports = function (S) {
     ctx.eq(noStore.lit, 7, 'the game plays on with storage blocked');
     ctx.eq(noStore.muted, true, 'mute still toggles in memory');
     ctx.eq(noStore.best, 1234, 'best score still tracks in memory');
+  };
+
+  /*
+   * Balancing harness. Each bot plays a whole run through the real economy:
+   * it buys the next item on its shopping list whenever it can afford it and
+   * the piece is unlocked, and never gets free gold. Runs entirely in the page
+   * so a full twelve-wave run takes milliseconds.
+   */
+  S.bots = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    const PLANS = {
+      'nothing': { plan: [] },
+
+      'core only': {
+        plan: [{ k: 'core' }, { k: 'core' }, { k: 'core' }, { k: 'core' }, { k: 'core' }]
+      },
+
+      'mirrors only': {
+        plan: [
+          { k: 'mirror', c: 7, r: 3 }, { k: 'mirror', c: 0, r: 3 }, { k: 'mirror', c: 0, r: 10 },
+          { k: 'mirror', c: 1, r: 6 }, { k: 'mirror', c: 1, r: 4 }, { k: 'mirror', c: 3, r: 8 },
+          { k: 'mirror', c: 5, r: 8 }, { k: 'mirror', c: 4, r: 5 }, { k: 'mirror', c: 6, r: 8 }
+        ]
+      },
+
+      'first timer': {
+        plan: [
+          { k: 'mirror', c: 7, r: 6 }, { k: 'mirror', c: 7, r: 3 }, { k: 'core' },
+          { k: 'mirror', c: 0, r: 3 }, { k: 'core' }, { k: 'mirror', c: 4, r: 8 }, { k: 'core' }
+        ]
+      },
+
+      'one mirror then lamps': {
+        plan: [
+          { k: 'mirror', c: 7, r: 3 },
+          { k: 'lamp', c: 2, r: 11 }, { k: 'lamp', c: 1, r: 6 }, { k: 'lamp', c: 1, r: 4 },
+          { k: 'lamp', c: 7, r: 2 }, { k: 'lamp', c: 5, r: 11 }, { k: 'lamp', c: 0, r: 5 }
+        ]
+      },
+
+      'splitter spread': {
+        plan: [
+          { k: 'mirror', c: 7, r: 3 }, { k: 'splitter', c: 7, r: 6 }, { k: 'mirror', c: 0, r: 3 },
+          { k: 'mirror', c: 0, r: 10 }, { k: 'splitter', c: 7, r: 5 }, { k: 'mirror', c: 2, r: 5 },
+          { k: 'core' }, { k: 'core' }, { k: 'core' }, { k: 'core' }, { k: 'core' }
+        ]
+      },
+
+      'reflector': {
+        plan: [
+          { k: 'mirror', c: 7, r: 3 }, { k: 'mirror', c: 0, r: 3 }, { k: 'mirror', c: 0, r: 10 },
+          { k: 'reflector', c: 1, r: 10 }, { k: 'core' }, { k: 'core' }, { k: 'core' },
+          { k: 'core' }, { k: 'core' }
+        ]
+      },
+
+      'informed': {
+        plan: [
+          { k: 'mirror', c: 7, r: 3 }, { k: 'mirror', c: 0, r: 3 }, { k: 'mirror', c: 0, r: 10 },
+          { k: 'core' }, { k: 'core' }, { k: 'core' },
+          { k: 'lamp', c: 2, r: 11 }, { k: 'lamp', c: 1, r: 6 },
+          { k: 'core' }, { k: 'lamp', c: 1, r: 4 }, { k: 'core' }
+        ]
+      },
+
+      'informed, early calls': {
+        early: true,
+        plan: [
+          { k: 'mirror', c: 7, r: 3 }, { k: 'mirror', c: 0, r: 3 }, { k: 'mirror', c: 0, r: 10 },
+          { k: 'core' }, { k: 'core' }, { k: 'core' },
+          { k: 'lamp', c: 2, r: 11 }, { k: 'lamp', c: 1, r: 6 },
+          { k: 'core' }, { k: 'lamp', c: 1, r: 4 }, { k: 'core' }
+        ]
+      },
+
+      'sell and rebuy loop': {
+        churn: true,
+        plan: [
+          { k: 'mirror', c: 7, r: 3 }, { k: 'mirror', c: 0, r: 3 }, { k: 'mirror', c: 0, r: 10 },
+          { k: 'core' }, { k: 'core' }, { k: 'core' }, { k: 'core' }, { k: 'core' }
+        ]
+      }
+    };
+
+    const results = await st(function (plans) {
+      const out = [];
+
+      function shop(s, spec, state) {
+        for (let guard = 0; guard < 8 && state.i < spec.plan.length; guard++) {
+          const next = spec.plan[state.i];
+          if (next.k === 'core') {
+            const cost = R.pieces.coreUpgradeCost(s);
+            if (cost === null) { state.i++; continue; }
+            if (s.gold < cost) return;
+            R.pieces.upgradeCore(s);
+            state.i++;
+            continue;
+          }
+          if (!s.unlocked[next.k]) return;
+          if (s.gold < R.pieces.cost(s, next.k)) return;
+          if (!R.pieces.place(s, next.k, next.c, next.r)) { state.i++; continue; }
+          state.i++;
+        }
+      }
+
+      Object.keys(plans).forEach(function (name) {
+        const spec = plans[name];
+        window.__REFRACT.restart(20260904);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        const state = { i: 0 };
+        const log = [];
+        for (let w = 1; w <= 12; w++) {
+          shop(s, spec, state);
+          if (spec.churn) {
+            /* Buy and immediately sell back, hunting for a money loop. */
+            for (let n = 0; n < 3; n++) {
+              if (s.gold >= 20 && R.pieces.place(s, 'mirror', 4, 8)) {
+                R.pieces.sell(s, 4, 8);
+              }
+            }
+          }
+          if (spec.early && s.phase === 'building') R.callWaveEarly(s);
+          window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+          window.__REFRACT.stepUntil('s.phase !== "wave"', 300);
+          log.push(s.coreHp);
+          if (s.phase === 'lost' || s.phase === 'won') break;
+        }
+        out.push({
+          name: name,
+          phase: s.phase,
+          wave: s.wave,
+          hp: s.coreHp,
+          gold: s.gold,
+          earned: s.goldEarned,
+          lit: s.beam.litRoadCount,
+          core: s.coreLevel,
+          pieces: s.pieces.size,
+          score: R.computeScore(s),
+          time: Math.round(s.time),
+          leaks: JSON.parse(JSON.stringify(s.leaksBy)),
+          hpLog: log
+        });
+      });
+      return out;
+    }, PLANS);
+
+    ctx.log('  ' + 'strategy'.padEnd(22) + ' result   wave hp  lit core pcs earned  score  hp by wave');
+    results.forEach(function (r) {
+      ctx.log('  ' + r.name.padEnd(22) + ' ' + r.phase.padEnd(8) +
+        ' ' + String(r.wave).padStart(4) +
+        ' ' + String(r.hp).padStart(2) +
+        ' ' + String(r.lit).padStart(4) +
+        ' ' + String(r.core).padStart(4) +
+        ' ' + String(r.pieces).padStart(3) +
+        ' ' + String(r.earned).padStart(6) +
+        ' ' + String(r.score).padStart(6) +
+        '  ' + JSON.stringify(r.hpLog) +
+        '  leaks ' + Object.keys(r.leaks).filter(function (k) { return r.leaks[k]; })
+          .map(function (k) { return k + 'x' + r.leaks[k]; }).join(' '));
+    });
+
+    const by = {};
+    results.forEach(function (r) { by[r.name] = r; });
+
+    /* --- the targets from specification section 15 --- */
+    ctx.eq(by['nothing'].wave, 3, 'a player who places nothing loses by wave 3');
+    ctx.check(by['first timer'].wave >= 6 && by['first timer'].wave <= 9,
+      'a first-time player following the hints reaches wave 6 to 9 (reached ' + by['first timer'].wave + ')');
+    ctx.eq(by['informed'].phase, 'won', 'an informed player wins');
+    ctx.check(by['informed'].hp >= 6 && by['informed'].hp <= 14,
+      'an informed win ends with 6 to 14 core HP (ended with ' + by['informed'].hp + ')');
+    ctx.check(by['mirrors only'].phase !== 'won', 'buying only mirrors does not win');
+    ctx.check(by['core only'].phase !== 'won', 'buying only core power does not win');
+    ctx.check(by['one mirror then lamps'].phase !== 'won', 'one mirror plus lamps does not win');
+
+    /* --- no exploits --- */
+    const churn = await st(function () {
+      window.__REFRACT.restart(555);
+      const s = R.state;
+      s.gold = 1000;
+      const before = s.gold;
+      for (let i = 0; i < 30; i++) {
+        R.pieces.place(s, 'mirror', 4, 8);
+        R.pieces.sell(s, 4, 8);
+      }
+      const afterFast = s.gold;
+      for (let i = 0; i < 10; i++) {
+        R.pieces.place(s, 'mirror', 4, 8);
+        window.__REFRACT.step(3.5);
+        R.pieces.sell(s, 4, 8);
+      }
+      return { before: before, afterUndoWindow: afterFast, afterSell: s.gold };
+    });
+    ctx.log('  churn: ' + JSON.stringify(churn));
+    ctx.eq(churn.afterUndoWindow, churn.before, 'buy and sell inside the undo window is exactly free');
+    ctx.check(churn.afterSell < churn.before, 'buy and sell after the window always loses money');
+
+    const earlyGain = by['informed, early calls'].earned - by['informed'].earned;
+    ctx.log('  early calling earned ' + earlyGain + ' extra gold (' +
+      Math.round(earlyGain / by['informed'].earned * 100) + '% of income) and ended on ' +
+      by['informed, early calls'].hp + ' hp in ' + by['informed, early calls'].time + 's');
+    ctx.check(earlyGain / by['informed'].earned < 0.12,
+      'the early-call bonus stays a tempo reward, not a snowball');
+
+    const waves = results.map(function (r) { return r.wave; });
+    ctx.check(Math.max.apply(null, waves) - Math.min.apply(null, waves) >= 5,
+      'strategies spread across the run: ' + JSON.stringify(waves));
   };
 
 };

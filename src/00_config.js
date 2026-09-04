@@ -40,10 +40,10 @@
     COUNTDOWN: 8,
     FIRST_COUNTDOWN: 10,
     GROUP_GAP: 1.5,
-    EARLY_CALL_RATE: 1.5,
+    EARLY_CALL_RATE: 1.0,
     WAVE_CLEAR_BASE: 12,
     WAVE_CLEAR_PER_WAVE: 3,
-    HP_MULT_PER_WAVE: 0.15,
+    HP_MULT_PER_WAVE: 0.20,
     UNLOCK_WAVE: { splitter: 2, reflector: 4, lamp: 7 },
     SPEED_OPTIONS: [1, 2],
     ENEMY: {
@@ -51,7 +51,7 @@
       runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, gold: 5,   leak: 1,  radius: 0.22 },
       swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, gold: 1,   leak: 1,  radius: 0.14 },
       brute:     { hp: 120, speed: 0.55, absorb: 0.70, gold: 16,  leak: 3,  radius: 0.36 },
-      bruteking: { hp: 400, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
+      bruteking: { hp: 460, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
       umbra:     { hp: 900, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
     /* Each group is [type, count, gapSeconds]; groups run in order with GROUP_GAP between them. */
@@ -67,7 +67,7 @@
       [ ['swarmling', 8, 0.25], ['swarmling', 8, 0.25], ['swarmling', 8, 0.25], ['brute', 2, 1.5] ],
       [ ['bruteking', 1, 0], ['runner', 8, 0.6] ],
       [ ['brute', 4, 1.2], ['mote', 10, 0.6], ['swarmling', 8, 0.25], ['swarmling', 8, 0.25] ],
-      [ ['mote', 6, 0.7], ['brute', 2, 1.5], ['umbra', 1, 0], ['brute', 2, 1.5] ]
+      [ ['mote', 6, 0.7], ['brute', 2, 1.5], ['umbra', 1, 0], ['brute', 2, 1.5], ['runner', 6, 0.5] ]
     ],
     ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
   };

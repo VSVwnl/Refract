@@ -567,3 +567,71 @@ Measurements:
 **Result:** 26 Node tests and 319 browser checks across thirteen scenarios pass. Audio works after a gesture, fails silently without one, and never throws. Rendering costs 0.18 ms a frame and the simulation 0.001 ms a step.
 
 **Next step:** Phase 10 — balancing against the targets in specification section 15.
+
+
+### Session 1 — 2026-09-04 — Phase 10: balancing
+
+**Goal:** Meet the tuning targets in specification section 15 through measured play.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 10. Only balance values and wave data may change.
+
+**Tools:** Claude Code with the Claude Opus model; a new `bots` scenario that plays whole runs through the real economy inside the page, so each candidate balance can be measured in seconds.
+
+**Work completed:**
+
+- `tools/qa-scenarios.js` gained `bots`: ten strategies, each a shopping list bought in order as gold allows, with no free gold and the real unlock schedule. Each run reports waves reached, HP curve, gold earned, LIT, core level, score, run length and a leak breakdown by enemy type. This is the harness section 33 asks for.
+- Iterated on `HP_MULT_PER_WAVE` (0.15 → 0.19 → 0.22 → 0.21 → 0.20), boss HP and the wave-12 composition, measuring the whole strategy table after each change.
+
+**Balance changes (before → after, with the reason):**
+
+| Value | Before | After | Reason |
+|---|---|---|---|
+| `HP_MULT_PER_WAVE` | 0.15 | **0.20** | An informed run finished with 17 core HP, above the 6–14 target band. 0.19 gave 14 (the very top of the band), 0.21 and 0.22 gave 5 and pushed a first-time player down to wave 5. 0.20 lands the informed win on **11 HP** and keeps a first-timer at wave 7. |
+| `ENEMY.bruteking.hp` | 400 | **460** | Wave 10 cost an informed player nothing. |
+| `ENEMY.bruteking.radius` | 0.42 | 0.50 | Cosmetic (logged in Phase 5): the mini-boss did not read as bigger than a plain brute. |
+| `ENEMY.umbra.radius` | 0.46 | 0.56 | Cosmetic, same reason. |
+| Wave 12 | `mote 6, brute 2, umbra 1, brute 2` | `mote 6, brute 2, umbra 1, brute 2, runner 6` | The finale had no tail; six fast runners arrive while the player is still burning down Umbra. |
+| `EARLY_CALL_RATE` | 1.5 | **1.0** | Measured: calling every wave early is pure upside for a player with a plan. At 1.5 it was worth 147 gold, about 14 percent of a run's income. At 1.0 it is 98 gold, about 8 percent — still a real reward for tempo, no longer close to dominant. |
+
+Umbra was tried at 950, 1050 and 1200 and reverted to its specified 900. Above 900 it survives the informed build outright and takes 10 HP in one hit, which turns the finale into a coin flip rather than a fight. At 900 the informed build kills it with roughly a five percent margin — its HP bar drains for the whole length of the road, and a player one lamp short loses it.
+
+**Measured strategy table at the final values** (each a full run, real economy):
+
+```
+strategy               result   wave hp  lit core pcs earned  score  hp by wave
+nothing                lost        3   0    1    1   0     33    133  [16,9,0]
+core only              lost        3   0    1    2   0     33    133  [16,9,0]
+mirrors only           lost        7   0   12    1   9    342    642
+first timer            lost        7   0    6    3   4    303    603
+one mirror then lamps  lost        5   0    7    1   1    182    382
+splitter spread        lost        7   0   21    3   6    343    643
+reflector              lost        7   0    7    3   4    325    625
+informed               won        12  11   23    5   6   1211   1921
+informed, early calls  won        12  11   23    5   6   1309   2019
+sell and rebuy loop    lost       12   0   12    6   3    967   1517
+```
+
+**Targets from section 15, all met:**
+
+- A player who places nothing loses on wave 3. Measured: wave 3, HP 20 → 16 → 9 → 0.
+- A first-time player following the hints reaches wave 6 to 9. Measured: wave 7.
+- A player who understands absorption and direction wins with 6 to 14 core HP. Measured: **won with 11**, in 413 s of simulated play — inside the 6 to 9 minute session target.
+- No single purchase wins alone: mirrors only reaches wave 7, core only wave 3, one mirror plus lamps wave 5, splitters spread thin wave 7.
+- Strategies spread across waves 3 to 12.
+
+**Exploit checks:**
+
+- *Sell and rebuy loop:* buying and selling a mirror thirty times inside the undo window leaves gold at exactly 1000, and ten cycles that let the window expire cost 60 gold. There is no money loop. The one thing a determined player can do is place a piece, let it fire for under three seconds, and undo for the full price — three seconds of one extra mirror per cycle of constant tapping. That is the forgiveness the undo window exists for, the payoff is tiny, and it is left as specified.
+- *Early-call snowball:* worth 98 gold, 8 percent of income, and the run ends on the same 11 HP. Accepted as a tempo reward. Recorded honestly: for a player who already knows their plan there is no real downside to pressing it, which is true of the genre generally; the cost is that the wave arrives before you have read its composition.
+- *Reflector:* a reflector mid-chain blocks everything downstream (LIT falls to 1), so it is a real decision rather than a free extra pass. The reflector bot reaches wave 7.
+- *Lamp spam:* lamps are the most gold-efficient damage in the game — at core 6 a lamp lighting a five-cell segment adds about 87 power-cells for 90 gold against 84 for the 300-gold core upgrade — but they unlock at wave 7 and cannot carry a run alone (wave 5 with one mirror plus lamps). The efficiency is what makes the late-game purchase decision interesting, and the unlock schedule keeps it from being the only answer.
+
+**Problems found:** Six scenarios asserted on pre-tuning numbers (mote HP by wave, Brute King HP, the wave-12 composition, the early-call rate, and the build used for the escalation victory run). Two of them referenced `R` from the Node side of the test file, where it does not exist.
+
+**Fixes:** Assertions updated to the tuned values and, where the value is a balance number, read from `R.BALANCE` inside the page so a future tuning pass does not break them again. The escalation victory run now uses the three-mirror, three-lamp build.
+
+**Decisions locked:** No changes to Part 1.
+
+**Result:** 26 Node tests and 330 browser checks across fourteen scenarios pass. Every tuning target in section 15 is met by measurement, and no exploit survives.
+
+**Next step:** Phase 11 — performance verification on a real GPU.
