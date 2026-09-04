@@ -745,3 +745,76 @@ dist/refract.zip          196,404 bytes (0.19 MB) against a 35 MB limit
 **Result:** The exact file that will be uploaded has been played to a win and to a loss, offline, from a clean unzip, using only the controls a player has.
 
 **Next step:** Phase 13 — the full acceptance checklist.
+
+
+### Session 1 — 2026-09-04 — Phase 13: browser QA and acceptance
+
+**Goal:** Execute the acceptance tests in specification section 35 and the browser checklist in section 34, answer the autonomous playtest questions honestly, and fix whatever turns up.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 13.
+
+**Tools:** Claude Code with the Claude Opus model; the sixteen-scenario Playwright suite; the packaged zip served from a clean folder with all non-local requests aborted; a live Chrome tab driven with real mouse input.
+
+**Work completed:**
+
+- New `acceptance` scenario covering the section 35 items that had no measurement yet: escalation between two waves with an identical build, the opening-fifteen-seconds rule, a click-every-control audit, a placeholder-text sweep across five screens, three consecutive full runs, endless continuation, two hundred rapid button presses, and placing, flipping and selling on all ninety-six tiles.
+- The whole suite run at 390x844, 360x800 and 430x932.
+- The packaged release build played offline to a win and a loss at 390x844 and again at 360x800.
+- The release build's layout checked offline at all five phone sizes and a desktop window.
+- A real Chrome pass on the packaged build with real mouse clicks.
+
+**Test-only fix:** the wave-11 frame-gap assertion failed at 430x932 because headless Chromium rasterises in software at deviceScaleFactor 3 and clamps `requestAnimationFrame`; a direct probe showed the renderer itself costing 0.3 ms. The assertion now measures the renderer cost we own and logs the observed gap as an environment note, with the real frame rate coming from the GPU run.
+
+**Acceptance tests (section 35), each with the evidence:**
+
+- **Loads from a static server.** Every scenario; load times 0.58–0.99 s.
+- **Works with internet disabled.** `dist/refract.zip` extracted into an empty folder, served from that folder, every non-local request aborted at the route level: won twelve waves at 390x844 and again at 360x800.
+- **No remote dependency.** Greps of the shipped file: zero `http`, `fetch`, `XMLHttpRequest`, `WebSocket`, `import(`, `serviceWorker`.
+- **No unexpected requests.** Exactly two per session, `GET /` and `GET /vendor/three.min.js`, in every run including the offline ones and the `file://` load.
+- **Portrait layout at every size.** 390x844, 360x800, 393x852, 430x932 pass the full `mobile` audit; 360x640 also passes with a 33.7 px cell. Cells 46.7 / 43.1 / 47.0 / 51.4 / 33.7 px.
+- **Touch only, no hover.** A whole twelve-wave run completed with nothing but taps at 360x800 (`handplay`), and again on the release build through its real HUD.
+- **Core loop starts within 15 s of PLAY.** The beam is already lighting a road cell behind the title card (LIT 1); PLAY sets a 10 s countdown.
+- **First action understandable from the hint.** "Tap a tile on the beam to bend it along the road." appears on PLAY and is replaced by the flip/move/sell hint after the first placement.
+- **Core loop playable.** place → wave → gold → spend → next wave, measured end to end in `waves`, `handplay` and `release`.
+- **Progression within one sitting.** Unlocks at waves 2, 4 and 7; core levels 1–6 measured at 10/13/17/22/28/35 beam power; LIT climbing from 1 to 23; six enemy types.
+- **Escalation noticeable.** Identical build (one mirror at (7,3)): **wave 3 kills all 9 enemies for 0 HP; wave 8 kills 0 of 20 and costs the full 20 HP.**
+- **Strategic decisions matter.** Ten bot strategies finish on waves 3, 3, 5, 7, 7, 7, 7, 12, 12, 12. Direction measured: against the flow puts 10 damage into the leading brute and 6.9 into the three motes behind it; with the flow, 4.2 and 23.1.
+- **Loss, victory, endless.** All three reached in the release build; the defeat tip matches the dominant leak type in four forced scenarios.
+- **Restart fully resets.** Five consecutive restarts produce byte-identical snapshots, with geometries, textures and scene objects unchanged.
+- **Multiple consecutive runs.** Three full twelve-wave runs without reloading, all reaching victory with identical results and no draw-call creep.
+- **No console errors or warnings from our code**, in every scenario. The only console output in headless is the GPU driver's own "ReadPixels" note during screenshots.
+- **No unfinished UI.** Every control was clicked and observed to change state: speed, mute, help (open and close), pause (and resume), core upgrade, two palette buttons, next wave. No "TODO", "TBD", "FIXME", "Lorem", "placeholder", "coming soon", "undefined", "NaN" or "null" appears on the board, help, victory, defeat or title screens.
+- **No placeholder mechanics.** Every piece and enemy type is measured against its specified behaviour in the unit tests and the browser suite.
+- **Performance.** 0.73 ms of our own work per frame at the peak board; worst frame 11.9 ms under 4x CPU throttling; 6.1 ms median frame gap on a GPU; 28 draw calls.
+- **Genre obvious from one screenshot.** `shots/legibility-390x844-dsf1.png` is a 1:1 pixel capture of mid-wave play: a winding road with direction chevrons, a defended core in the bottom corner, enemies with HP bars, WAVE and gold counters, and a four-button defense palette across the base.
+- **Packaging.** 0.19 MB zip, `index.html` at the root, `vendor/` alongside, readable unminified code with a banner comment per source file, Three.js only in `vendor/` by relative path with its licence.
+- **Release build has no debug code.** Zero occurrences of `__REFRACT`, `debugPanel`, `?debug` handling, or even the word "debug"; the compliance checker fails the build if any appear.
+- **Nothing addressed to evaluators, no personal information.** `tools/scan-artifacts.js` checks the shipped `index.html`, the build log, the design intent and the submission notes for email addresses, machine paths, profile links, the author's own git name and email, placeholder markers and evaluator-directed text.
+- **Simulation identical at 30/60/120 Hz** (and 144): the same enemy arrives at 5.9 s of simulated time at every rate.
+- **Works with `localStorage` blocked and audio unavailable**: both verified by deleting the API and by making the property throw.
+
+**Real-browser pass (Chrome, real mouse input, packaged build served from the clean unzip):** clicked PLAY, then tiles (7,3), (0,3) and (0,10); the mirrors placed, the beam bent through the chain, LIT read 12/25 and the run reached wave 5 with 20 HP and 201 gold. The beam was visibly red and thin along the stretch of road behind a brute and white in front of it. Gold floaters arced to the counter. Hiding the tab paused the game and showed the PAUSED overlay; the help button opened HOW TO PLAY and paused the wave, and closing it resumed; mute toggled both ways; speed toggled 1x to 2x and back.
+
+**Autonomous playtest answers (section 34), answered honestly:**
+
+- *Is the goal obvious within 10 seconds?* Yes. The title card gives the premise in one line, and the board opens with the beam already burning the one road cell it touches, a countdown running, and a hint naming the exact first action.
+- *Is the first interaction clear?* Yes. One tap on the beam's column bends it, and the smart orientation picks the direction that lights the most road, so a first tap almost always looks like a good move.
+- *Is placing a mirror satisfying?* Yes, more so since the sweep, the pop and the placement chime. The strongest moment is the first tap at (7,3): the beam travels out and six road cells light up at once.
+- *Does the loop work without explanation?* Mostly. Place, watch, spend, repeat is carried by the incoming strip and the LIT counter. The one rule that is not obvious from play alone is that direction matters; the brute hint is the only in-play teaching for it, and the help screen carries the full explanation. A tester who never opens help will probably discover shielding by accident around wave 5 rather than reason about it.
+- *Meaningful decision each wave?* Yes, and it is measurable: spreading the beam thin loses (wave 7 with LIT 21) while concentrating it wins (wave 12 with LIT 12), and lamps are three times more gold-efficient than the last core level.
+- *Does progression visibly affect play?* Yes: the beam thickens and brightens with each core level, unlocks flash into the palette at waves 2, 4 and 7, and LIT climbs from 1 to 23.
+- *Does difficulty escalate legibly?* Yes, sharply: the same build clears wave 3 without a scratch and loses the whole core on wave 8.
+- *Can the tester say why they lost?* The defeat screen names the cause: brutes shielding, swarms draining, runners crossing too fast, or simply not enough road lit.
+- *Any exploits?* None that pay. Buying and selling in a loop is exactly break-even inside the undo window and loses 30 percent outside it. Early-calling every wave is worth 8 percent of a run's income and is recorded as an accepted tempo reward rather than a trade-off it is not.
+- *Does restart work perfectly?* Yes: five restarts produce byte-identical state with no mesh, geometry or listener growth.
+- *Does it encourage another run?* The result screen shows the score and the best score and puts PLAY AGAIN under the thumb; after a win, CONTINUE keeps the same board going into endless. A tester who lost on wave 8 has an obvious next move, which is the honest test of whether the tip worked.
+
+**Problems found:** one test-environment assertion (above). No game defects.
+
+**Decisions locked:** No changes to Part 1.
+
+**Balance changes:** none.
+
+**Result:** 26 Node tests and 379 browser checks across sixteen scenarios pass at 390x844, and the whole suite also passes at 360x800 and 430x932. Every box in section 35 is ticked with the evidence recorded above.
+
+**Next step:** Phase 14 — final packaging.
