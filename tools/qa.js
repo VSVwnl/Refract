@@ -164,9 +164,9 @@ async function main() {
   const browser = await chromium.launch({
     headless: !flag('headed') && !gpu,
     slowMo: Number(arg('slow', 0)),
-    args: ['--enable-precise-memory-info'].concat(gpu
-      ? ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--use-angle=default']
-      : [])
+    args: ['--enable-precise-memory-info']
+      .concat(gpu ? ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--use-angle=default'] : [])
+      .concat(flag('nowebgl') ? ['--disable-webgl', '--disable-webgl2', '--disable-3d-apis'] : [])
   });
   const desktop = flag('desktop');
   const context = await browser.newContext(desktop ? {
@@ -206,7 +206,11 @@ async function main() {
 
   const t0 = Date.now();
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForFunction(function () { return window.R && R.render && R.render.ready; }, null, { timeout: 10000 });
+  if (flag('nowebgl')) {
+    await page.waitForFunction(function () { return window.R && window.R.state; }, null, { timeout: 10000 });
+  } else {
+    await page.waitForFunction(function () { return window.R && R.render && R.render.ready; }, null, { timeout: 10000 });
+  }
   const loadMs = Date.now() - t0;
 
   const ctx = new Ctx(page, log);
@@ -230,7 +234,9 @@ async function main() {
     /GL Driver Message/,
     /GPU stall due to ReadPixels/,
     /Automatic fallback to software WebGL/,
-    /SwiftShader/
+    /SwiftShader/,
+    /* Three.js logs its own message before throwing on a device with no WebGL. */
+    /THREE\.WebGLRenderer:/
   ];
   const ourErrors = consoleMsgs.filter(function (m) {
     if (!/^error/.test(m) && !/^warning/.test(m)) return false;

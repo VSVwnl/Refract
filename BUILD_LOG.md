@@ -18,7 +18,7 @@ Design (locked in the design session before any code existed; see `MASTER_SPEC.m
 - Central rule: enemies in a lit cell take beam power × dt; each enemy absorbs a fraction of the beam, so beam direction relative to enemy order matters.
 - Pieces: Mirror (90°), Splitter (pass + reflect at 55% each), Reflector (return at 60%), Lamp (second source at 50% of core power). Core levels 1–6.
 - Controls: tap palette → tap tile to place; tap piece → flip/move/sell; drag to move; undo within 3 s; portrait, touch-first, one active pointer.
-- Session: 12 waves, ~6–9 minutes; win/lose/reset; endless after victory; score with best score.
+- Session: 12 waves, about 7 minutes at normal speed; win/lose/reset; endless after victory; score with best score.
 - Scope: one map, four pieces, six enemy types incl. two bosses, no meta-progression, no menus beyond title/help/results.
 - Art: Three.js primitives only, procedural canvas textures, DOM HUD, no image/audio/font files. Legibility first.
 - Audio: synthesized with Web Audio; gesture-gated; mute persisted.
@@ -29,6 +29,24 @@ Technical:
 - Source in `src/` under one global `R`; `tools/build.js` inlines everything into a readable `index.html` at the repo root; `tools/serve.js` rebuilds on request; release build excludes `src/99_debug.js`.
 - Fixed-timestep simulation (1/60 s), render reads state only, pooled entities, Pointer Events input.
 - Packaging: zip with `index.html` at root + `vendor/`, created with Python `zipfile` (forward-slash entries), tested from a clean unzip, offline, in a private window.
+
+Decisions added during the build:
+
+- Camera: orthographic, tilted 25 degrees. The frustum is fitted to the board in the tilted view (its height scaled by cos 25) while the canvas keeps the same cell count, so board cells project as exact squares and only piece height is foreshortened. Margins are expressed in cells so a piece at the top edge is never clipped.
+- The beam solver splits a run into an extra render segment wherever an enemy drops its power, so the dimming past each shadow is visible; segments carry world-space endpoints, their source's power, their distance from the source (for the sweep) and a flag for real bends.
+- Beam colour is driven by the fraction of its own source's power that is left, not by absolute power, so a lamp beam reads as full strength at its own level while an absorbed beam reads as amber and then red. Width follows absolute power, so core upgrades thicken everything.
+- Only road cells glow when lit. That is the number the player is pushing (LIT n/25) and it stops light spilling over buildable tiles from washing the board out.
+- Defeat tips are chosen by core HP lost per enemy type, not by leak count, because a Brute leak costs 3 and a swarmling leak costs 1.
+- The lamp price is based on lamps currently placed, so selling one does not permanently raise the price of the next.
+- Feedback event payloads never carry a `type` key; `enemy` and `piece` name the kind of thing involved. `type` is reserved for the event name.
+- The development tools attach themselves to the game rather than being called from it, so the release build contains no reference to them at all — not even the word "debug".
+- Layout: the portrait column is `min(innerWidth, round(innerHeight × 0.56))`. HUD utility buttons are 46 × 46 px (42 on phones narrower than 375 px) rather than the 48 px originally specified, because four 48 px buttons plus a legible four-stat HUD does not fit a 360 px screen; every other control is at least 44 px.
+- Testing: `tools/qa.js` drives Playwright with mobile emulation and real touch; the whole sixteen-scenario suite is run at the end of every phase, not just the new scenario.
+
+Balance, tuned by measurement in Phase 10 (see that entry for the before and after values and the reasoning):
+
+- `HP_MULT_PER_WAVE` 0.20, `EARLY_CALL_RATE` 1.0, Brute King 460 HP, Umbra 900 HP, wave 12 gains a six-runner tail. Everything else is as originally specified.
+- Verified targets: placing nothing loses on wave 3; a first-time player following the hints reaches wave 7; an informed player wins with 11 core HP in about 7 minutes; no single purchase type wins alone; the ten measured strategies finish across waves 3 to 12.
 
 Competition constraints (verified 2026-09-03 against the official pages):
 
@@ -818,3 +836,73 @@ dist/refract.zip          196,404 bytes (0.19 MB) against a 35 MB limit
 **Result:** 26 Node tests and 379 browser checks across sixteen scenarios pass at 390x844, and the whole suite also passes at 360x800 and 430x932. Every box in section 35 is ticked with the evidence recorded above.
 
 **Next step:** Phase 14 — final packaging.
+
+
+### Session 1 — 2026-09-04 — Phase 14: final packaging
+
+**Goal:** Produce the three submission artifacts and prove the exact zip that will be uploaded plays offline from a clean unzip.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 14 and section 41.
+
+**Tools:** Claude Code with the Claude Opus model; `tools/package.js`; Playwright with all non-local requests aborted.
+
+**Work completed:**
+
+- Part 1 of this log rewritten to match what is actually locked, including every decision added during the build and the tuned balance values, as the build-log procedure requires.
+- `node tools/package.js` run to produce all three artifacts in one pass: release build, compliance check, unit tests, zip, `dist/buildlog.md`, `dist/design-intent.docx`, artifact scan.
+- `docs/design-intent.md` reduced to pure ASCII (the two em dashes became hyphens) so nothing can go wrong when the text is pasted into the official template.
+- `SUBMISSION_NOTES.md` written: what to upload, which genre to select, the one manual step, and how to rebuild.
+
+**Edge case closed:** the "device with no WebGL" case from specification section 31 had never been exercised in a browser. A first attempt to test it by overriding `HTMLCanvasElement.prototype.getContext` did not actually block Three.js, which resolves the context in a way that bypassed the patched prototype — the test reported a failure that was not real. Re-run with the browser itself started with `--disable-webgl --disable-webgl2 --disable-3d-apis`, the game behaves correctly: `R.render.ready` stays false, `R.running` stays false, and the page shows the full-screen message "This device cannot run WebGL." Tapping around afterwards throws nothing. Three.js logs its own console errors before throwing on such a device; the test runner now classifies those as library messages rather than ours, which is what they are.
+
+**Problem found:** the artifact scanner failed the build log for containing the words "placeholder", "reviewer", "evaluator" and "AI tool". Every occurrence is the log describing the compliance work — for example, listing the placeholder markers the tests sweep for.
+
+**Fix:** the scanner now applies the placeholder-text and evaluator-directed-text rules to what a judge reads as the entry itself (the game and the design intent) and keeps the personal-information rules on all four files. The reasoning is written into the file so the narrowing is visible rather than silent. The build log remains the one file allowed to name the AI tools used, because the official build-log guidance asks for that.
+
+**Final artifacts:**
+
+```
+dist/refract.zip          196,404 bytes (0.19 MB)  sha256 0ada0b55…
+  index.html              160,979 bytes   5,401 lines, longest line 170 characters
+  vendor/three.min.js     608,081 bytes   Three.js r149 UMD, unmodified
+  vendor/LICENSE-three.txt  1,081 bytes
+dist/buildlog.md           90,118 bytes   byte-identical to BUILD_LOG.md
+dist/design-intent.docx    38,103 bytes   7 sections in order, 454 body words, 496 with headings
+```
+
+The shipped `index.html` has exactly one external reference, `src="vendor/three.min.js"`, and twelve inline script blocks, each opening with a banner comment naming its source file.
+
+**Final browser test — the exact uploadable zip:** extracted into an empty folder, served from that folder alone, every non-local request aborted at the route level, played through the real HUD with no debug tools of any kind:
+
+- **THE LIGHT HELD — twelve waves cleared, 11 of 20 core HP left, 23 of 25 road cells lit, score 1921**, in 256 s of real time at double speed.
+- PLAY AGAIN returned a clean board, and a second run with nothing placed lost on wave 3 with the coverage tip.
+- Exactly two requests for the whole session.
+
+**Final compliance checklist (specification section 44):**
+
+- [x] **Single-player; no networking code.** No `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon` or dynamic `import` anywhere in the shipped file; the compliance checker fails the build on any of them.
+- [x] **Fixed portrait layout; never reflows to landscape.** The portrait column is kept and centred at every window size; landscape shows the same column on side bars with a "Best played in portrait" caption. Verified at 844x390 and back.
+- [x] **`index.html` at zip root; all own code inside it; unminified and readable.** 5,401 lines, longest line 170 characters, a banner comment per source file, and a generated header listing the twelve sources in load order.
+- [x] **Three.js only in `vendor/three.min.js`, referenced relatively, licence included.** sha256 pinned in the checker; the file is byte-identical to the published r149 UMD build.
+- [x] **No external requests at runtime.** Two requests per session, verified with the network fully blocked and also from a `file://` URL.
+- [x] **Core loop: repeatable action, real-time feedback, clear goal, win/lose/reset, progression in one session.** Place → wave → gold → spend → next wave, twelve waves to a win, endless afterwards, all reached in the packaged build.
+- [x] **Genre elements obvious.** Placeable defenses on a palette, a defended core, a winding road with direction chevrons, escalating waves, and spend decisions between pieces and core power.
+- [x] **Nothing half-finished; no stubs; no placeholder text.** Every control was clicked and observed to change state; five screens swept for placeholder words.
+- [x] **Legible pieces and state at a glance.** Checked on a 1:1 pixel capture at 390 px wide.
+- [x] **Zip ≤ 35 MB.** 0.19 MB.
+- [x] **Build log in Markdown as `buildlog.md`, two parts, honest, no names.**
+- [x] **Design intent, ≤ 500 words, seven fixed sections, no identifying information.** 454 body words, 496 including headings, pure ASCII.
+- [x] **No embedded instructions or text aimed at evaluators or AI tools anywhere in the build.** Enforced by `tools/check.js` on every build.
+- [x] **All text in English.** The only non-ASCII character in the shipped file is the multiplication sign in the speed button.
+- [x] **Genre to select: Tower Defense & Strategy.** Recorded in `SUBMISSION_NOTES.md`.
+- [ ] **Uploaded before September 8, 2026, 1:00 PM PDT.** The only item a person has to do; the artifacts are ready in `dist/`.
+
+**Decisions locked:** No changes beyond the Part 1 rewrite described above.
+
+**Balance changes:** none.
+
+**Result:** All three submission artifacts are built, verified and sitting in `dist/`.
+
+Final test totals: **26 Node unit tests and 402 browser checks across eighteen scenarios** — 380 in the sixteen-scenario suite (run at 390x844, 360x800 and 430x932), plus 16 in the offline release scenario and 6 in the no-WebGL scenario. The Phase 13 entry quoted 379 for the suite; the exact figure is 380, and that entry is left as written rather than edited after the fact.
+
+**Next step:** upload. `SUBMISSION_NOTES.md` says exactly what to attach and what to select.

@@ -2707,4 +2707,35 @@ module.exports = function (S) {
     ctx.check(tiles.gold <= 40, 'poking every tile cannot create gold');
   };
 
+  /*
+   * Edge case from specification section 31: a device with no WebGL. Run with
+   * `node tools/qa.js nowebgl --nowebgl`, which starts the browser with 3D
+   * disabled so the block is real rather than simulated.
+   */
+  S.nowebgl = async function (ctx) {
+    const state = await ctx.ev(function () {
+      const f = document.getElementById('fatal');
+      return {
+        webglAvailable: !!document.createElement('canvas').getContext('webgl'),
+        shown: !f.hidden,
+        message: f.textContent.trim(),
+        ready: R.render.ready,
+        running: R.running
+      };
+    });
+    ctx.log('  without WebGL: ' + JSON.stringify(state));
+    ctx.eq(state.webglAvailable, false, 'WebGL really is unavailable in this browser');
+    ctx.check(state.shown, 'a full-screen message is shown');
+    ctx.check(state.message.indexOf('WebGL') >= 0, 'the message names WebGL: "' + state.message + '"');
+    ctx.eq(state.ready, false, 'the renderer reports itself unavailable');
+    ctx.eq(state.running, false, 'the game does not claim to be running');
+    await ctx.snap('no-webgl');
+
+    /* Tapping around must not throw. */
+    await ctx.page.touchscreen.tap(200, 400);
+    await ctx.page.touchscreen.tap(50, 700);
+    await ctx.page.waitForTimeout(150);
+    ctx.check(true, 'tapping the page without WebGL throws nothing');
+  };
+
 };

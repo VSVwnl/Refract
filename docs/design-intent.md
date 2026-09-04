@@ -2,7 +2,7 @@
 
 ## 1. Game title and genre
 
-REFRACT — Tower Defense & Strategy.
+REFRACT - Tower Defense & Strategy.
 
 ## 2. Target player and pitch
 
@@ -28,4 +28,4 @@ The signature twist is absorption. Every shadow the light passes through takes a
 
 ## 7. Future-state vision
 
-A full game of hand-built maps that each teach a new optical piece — prisms, lenses, coloured light and colour-keyed shadows — with daily seeded challenges and a score chase, rebuilt natively on the creation tools.
+A full game of hand-built maps that each teach a new optical piece - prisms, lenses, coloured light and colour-keyed shadows - with daily seeded challenges and a score chase, rebuilt natively on the creation tools.
