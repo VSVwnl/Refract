@@ -5,7 +5,9 @@
  * Rebuilds index.html (development build, debug tools included) on every
  * request for "/" or "/index.html" so the browser never sees a stale file.
  *
- * Usage: node tools/serve.js [port]
+ * Usage: node tools/serve.js [port] [host]
+ *   node tools/serve.js               localhost only
+ *   node tools/serve.js 8080 0.0.0.0  reachable from a phone on the same network
  */
 
 const http = require('http');
@@ -15,6 +17,7 @@ const build = require('./build.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.argv[2]) || 8080;
+const HOST = process.argv[3] || '127.0.0.1';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -59,6 +62,16 @@ const server = http.createServer(function (req, res) {
   });
 });
 
-server.listen(PORT, '127.0.0.1', function () {
+server.listen(PORT, HOST, function () {
   console.log('REFRACT dev server on http://localhost:' + PORT + '/');
+  if (HOST === '0.0.0.0') {
+    const nets = require('os').networkInterfaces();
+    Object.keys(nets).forEach(function (name) {
+      nets[name].forEach(function (net) {
+        if (net.family === 'IPv4' && !net.internal) {
+          console.log('  on this network: http://' + net.address + ':' + PORT + '/');
+        }
+      });
+    });
+  }
 });

@@ -5,7 +5,7 @@
  * Used to serve an unpacked release build from an arbitrary directory so the
  * exact submitted files can be tested.
  *
- * Usage: node tools/static.js <directory> [port]
+ * Usage: node tools/static.js <directory> [port] [host]
  */
 
 const http = require('http');
@@ -14,6 +14,7 @@ const path = require('path');
 
 const ROOT = path.resolve(process.argv[2] || '.');
 const PORT = Number(process.argv[3]) || 8090;
+const HOST = process.argv[4] || '127.0.0.1';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -42,6 +43,16 @@ http.createServer(function (req, res) {
     });
     res.end(data);
   });
-}).listen(PORT, '127.0.0.1', function () {
+}).listen(PORT, HOST, function () {
   console.log('static server for ' + ROOT + ' on http://localhost:' + PORT + '/');
+  if (HOST === '0.0.0.0') {
+    const nets = require('os').networkInterfaces();
+    Object.keys(nets).forEach(function (name) {
+      nets[name].forEach(function (net) {
+        if (net.family === 'IPv4' && !net.internal) {
+          console.log('  on this network: http://' + net.address + ':' + PORT + '/');
+        }
+      });
+    });
+  }
 });
