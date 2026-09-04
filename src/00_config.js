@@ -42,8 +42,8 @@
     GROUP_GAP: 1.5,
     EARLY_CALL_RATE: 1.0,
     WAVE_CLEAR_BASE: 12,
-    WAVE_CLEAR_PER_WAVE: 3,
-    HP_MULT_PER_WAVE: 0.20,
+    WAVE_CLEAR_PER_WAVE: 7,
+    HP_MULT_PER_WAVE: 0.14,
     UNLOCK_WAVE: { splitter: 2, reflector: 4, lamp: 7 },
     SPEED_OPTIONS: [1, 2],
     ENEMY: {
@@ -75,20 +75,28 @@
   R.PIECE_TYPES = ['mirror', 'splitter', 'reflector', 'lamp'];
 
   /*
-   * The fixed map "Stairway". Ordered path cells from the spawn portal to the
-   * core; enemies walk in from one row above the first cell.
+   * The fixed map "Switchback". Four long sweeps alternate direction down the
+   * board, joined by short connectors. Every long sweep has a buildable cell at
+   * both ends, so any of them can be lit from either direction, and columns 0
+   * and 7 are left open as trunks for chaining between them.
+   *
+   * Enemies are spawned one cell above the portal and walk in.
    */
   R.MAP = {
-    name: 'Stairway',
-    spawn: [1, 0],
+    name: 'Switchback',
+    spawn: [5, 0],
     core: [7, 11],
     path: [
-      [1, 0], [1, 1], [1, 2], [1, 3],
-      [2, 3], [3, 3], [4, 3], [5, 3], [6, 3],
-      [6, 4], [6, 5], [6, 6],
-      [5, 6], [4, 6], [3, 6], [2, 6],
-      [2, 7], [2, 8], [2, 9], [2, 10],
-      [3, 10], [4, 10], [5, 10], [6, 10], [7, 10],
+      [5, 0], [5, 1], [5, 2],
+      [4, 2], [3, 2], [2, 2], [1, 2],
+      [1, 3], [1, 4],
+      [2, 4], [3, 4], [4, 4], [5, 4], [6, 4],
+      [6, 5], [6, 6],
+      [5, 6], [4, 6], [3, 6], [2, 6], [1, 6],
+      [1, 7], [1, 8],
+      [2, 8], [3, 8], [4, 8], [5, 8], [6, 8],
+      [6, 9], [6, 10],
+      [7, 10],
       [7, 11]
     ]
   };

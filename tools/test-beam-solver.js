@@ -67,68 +67,70 @@ test('the untouched core beam lights exactly one road cell', function () {
 
 /* ---------- mirrors ---------- */
 
-test('a mirror at (7,3) lights the whole of row 3 plus the corner', function () {
+test('a mirror at (7,4) lights the whole of row 4 plus the corner', function () {
   const s = fresh();
-  const p = put(s, 'mirror', 7, 3);
+  const p = put(s, 'mirror', 7, 4);
   eq(p.orient, 1, 'smart orientation picks the backslash');
   eq(litRoad(s), 7, 'lit road cells');
-  for (let c = 1; c <= 6; c++) near(litAt(s, c, 3), 10, 1e-9, 'row 3 power at c' + c);
+  for (let c = 1; c <= 6; c++) near(litAt(s, c, 4), 10, 1e-9, 'row 4 power at c' + c);
   near(litAt(s, 7, 10), 10, 1e-9, 'corner still lit');
 });
 
 test('flipping that mirror sends the beam off the board', function () {
   const s = fresh();
-  put(s, 'mirror', 7, 3);
-  R.pieces.flip(s, 7, 3);
-  eq(R.pieces.at(s, 7, 3).orient, 0, 'orientation toggled');
+  put(s, 'mirror', 7, 4);
+  R.pieces.flip(s, 7, 4);
+  eq(R.pieces.at(s, 7, 4).orient, 0, 'orientation toggled');
   eq(litRoad(s), 1, 'only the corner stays lit');
 });
 
-test('a mirror at (7,6) lights the five row-6 road cells', function () {
-  const s = fresh();
-  const p = put(s, 'mirror', 7, 6);
-  eq(p.orient, 1, 'smart orientation');
-  eq(litRoad(s), 6, 'lit road cells');
+test('every sweep is one mirror away from the trunk', function () {
+  [[4, 7], [6, 7], [8, 7], [2, 6]].forEach(function (pair) {
+    const s = fresh();
+    const p = put(s, 'mirror', 7, pair[0]);
+    eq(p.orient, 1, 'smart orientation at row ' + pair[0]);
+    eq(litRoad(s), pair[1], 'row ' + pair[0] + ' lit road cells');
+  });
 });
 
-test('the three-mirror chain lights twelve road cells', function () {
+test('a three-mirror chain carries the beam to a second sweep', function () {
   const s = fresh();
-  put(s, 'mirror', 7, 3, 1);
-  put(s, 'mirror', 0, 3, 0);
-  put(s, 'mirror', 0, 10, 1);
-  eq(litRoad(s), 12, 'lit road cells');
-  near(litAt(s, 2, 10), 10, 1e-9, 'no loss along a mirror chain');
+  put(s, 'mirror', 7, 8, 1);
+  put(s, 'mirror', 0, 8, 1);
+  put(s, 'mirror', 0, 6, 0);
+  eq(litRoad(s), 13, 'lit road cells');
+  near(litAt(s, 3, 6), 10, 1e-9, 'no loss along a mirror chain');
 });
 
 test('placing costs gold and is refused when it is short', function () {
   const s = fresh();
   s.gold = 45;
-  put(s, 'mirror', 5, 5);
+  put(s, 'mirror', 3, 5);
   eq(s.gold, 25, 'gold after one mirror');
   put(s, 'mirror', 4, 5);
   eq(s.gold, 5, 'gold after two mirrors');
-  eq(R.pieces.place(s, 'mirror', 3, 5), null, 'third mirror refused');
+  eq(R.pieces.place(s, 'mirror', 5, 5), null, 'third mirror refused');
   eq(s.gold, 5, 'gold unchanged');
   eq(s.pieces.size, 2, 'piece count');
 });
 
 test('pieces cannot be placed on road, core or an occupied cell', function () {
   const s = fresh();
-  eq(R.pieces.placementProblem(s, 'mirror', 1, 1), 'terrain', 'road cell');
+  eq(R.pieces.placementProblem(s, 'mirror', 3, 4), 'terrain', 'road cell');
   eq(R.pieces.placementProblem(s, 'mirror', 7, 11), 'terrain', 'core cell');
-  eq(R.pieces.placementProblem(s, 'mirror', 1, 0), 'terrain', 'spawn cell');
-  put(s, 'mirror', 5, 5);
-  eq(R.pieces.placementProblem(s, 'mirror', 5, 5), 'occupied', 'occupied cell');
+  eq(R.pieces.placementProblem(s, 'mirror', 5, 0), 'terrain', 'spawn cell');
+  put(s, 'mirror', 3, 5);
+  eq(R.pieces.placementProblem(s, 'mirror', 3, 5), 'occupied', 'occupied cell');
 });
 
 /* ---------- loops ---------- */
 
 test('a mirror ring that leads back to its first mirror terminates', function () {
   const s = fresh();
-  put(s, 'mirror', 7, 8, 1);
-  put(s, 'mirror', 1, 8, 1);
-  put(s, 'mirror', 1, 4, 0);
-  put(s, 'mirror', 7, 4, 1);
+  put(s, 'mirror', 7, 9, 1);
+  put(s, 'mirror', 0, 9, 1);
+  put(s, 'mirror', 0, 1, 0);
+  put(s, 'mirror', 7, 1, 1);
   ok(s.beam.segCount < B.MAX_SEGMENTS, 'segment count stayed under the cap');
   ok(!s.beam.overflow, 'no overflow');
   const seen = {};
@@ -146,7 +148,7 @@ test('a splitter makes two branches at 55 percent', function () {
   const s = fresh();
   put(s, 'splitter', 7, 6, 1);
   const straight = litAt(s, 7, 5);
-  const bent = litAt(s, 6, 6);
+  const bent = litAt(s, 5, 6);
   near(straight, 10 * B.SPLIT_FACTOR, 1e-6, 'straight branch power');
   near(bent, 10 * B.SPLIT_FACTOR, 1e-6, 'reflected branch power');
 });
@@ -217,23 +219,23 @@ test('core upgrades raise both the beam and the lamps', function () {
 
 test('enemies absorb power in the order the light meets them', function () {
   const s = fresh();
-  put(s, 'mirror', 7, 3, 1);
-  const front = foe(2, 3, 0.7, 0);
-  const back = foe(5, 3, 0.25, 0);
-  const occ = occupancyOf([{ c: 2, r: 3, e: front }, { c: 5, r: 3, e: back }]);
+  put(s, 'mirror', 7, 4, 1);
+  const front = foe(2, 4, 0.7, 0);
+  const back = foe(5, 4, 0.25, 0);
+  const occ = occupancyOf([{ c: 2, r: 4, e: front }, { c: 5, r: 4, e: back }]);
   R.beam.solve(s, occ, 1, s.beam);
   /* The beam runs west, so it meets the cell at column 5 first. */
   near(back.damage, 10, 1e-6, 'first enemy met takes full power');
   near(front.damage, 7.5, 1e-6, 'the second takes what is left');
-  near(litAt(s, 1, 3), 10 * 0.75 * 0.3, 1e-6, 'power past both');
+  near(litAt(s, 1, 4), 10 * 0.75 * 0.3, 1e-6, 'power past both');
 });
 
 test('two enemies in one cell are ordered along the beam', function () {
   const s = fresh();
-  put(s, 'mirror', 7, 3, 1);
-  const nearer = foe(4, 3, 0.5, 0.3);
-  const farther = foe(4, 3, 0.5, -0.3);
-  const occ = occupancyOf([{ c: 4, r: 3, e: nearer }, { c: 4, r: 3, e: farther }]);
+  put(s, 'mirror', 7, 4, 1);
+  const nearer = foe(4, 4, 0.5, 0.3);
+  const farther = foe(4, 4, 0.5, -0.3);
+  const occ = occupancyOf([{ c: 4, r: 4, e: nearer }, { c: 4, r: 4, e: farther }]);
   R.beam.solve(s, occ, 1, s.beam);
   /* Travelling west, the larger x is met first. */
   near(nearer.damage, 10, 1e-6, 'east-most enemy hit first');
@@ -242,19 +244,19 @@ test('two enemies in one cell are ordered along the beam', function () {
 
 test('a beam dies once absorption drops it below the minimum', function () {
   const s = fresh();
-  put(s, 'mirror', 7, 3, 1);
-  const brute = foe(5, 3, 0.99, 0);
-  const occ = occupancyOf([{ c: 5, r: 3, e: brute }]);
+  put(s, 'mirror', 7, 4, 1);
+  const brute = foe(5, 4, 0.99, 0);
+  const occ = occupancyOf([{ c: 5, r: 4, e: brute }]);
   R.beam.solve(s, occ, 1, s.beam);
-  eq(litAt(s, 4, 3), 0, 'nothing past the absorber');
+  eq(litAt(s, 4, 4), 0, 'nothing past the absorber');
   near(brute.damage, 10, 1e-6, 'the absorber still took the hit');
 });
 
 test('the render beam is split where an enemy dims it', function () {
   const s = fresh();
-  put(s, 'mirror', 7, 3, 1);
-  const e = foe(4, 3, 0.5, 0);
-  const occ = occupancyOf([{ c: 4, r: 3, e: e }]);
+  put(s, 'mirror', 7, 4, 1);
+  const e = foe(4, 4, 0.5, 0);
+  const occ = occupancyOf([{ c: 4, r: 4, e: e }]);
   R.beam.solve(s, occ, 1, s.beam);
   let west = 0;
   for (let i = 0; i < s.beam.segCount; i++) if (s.beam.segments[i].dir === R.W) west++;
@@ -277,10 +279,10 @@ test('the segment cap holds with a dense splitter field', function () {
 test('a solve is deterministic', function () {
   const a = fresh();
   put(a, 'mirror', 7, 3, 1);
-  put(a, 'splitter', 4, 4, 0);
+  put(a, 'splitter', 3, 3, 0);
   const b = fresh();
   put(b, 'mirror', 7, 3, 1);
-  put(b, 'splitter', 4, 4, 0);
+  put(b, 'splitter', 3, 3, 0);
   eq(a.beam.segCount, b.beam.segCount, 'segment counts match');
   for (let i = 0; i < a.beam.lit.length; i++) eq(a.beam.lit[i], b.beam.lit[i], 'lit cell ' + i);
 });

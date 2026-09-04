@@ -299,15 +299,24 @@
     return scratchResult;
   }
 
-  /* Total beam power falling on road cells, ignoring enemies. */
+  /*
+   * How good a layout is, ignoring enemies. The main term is the power falling
+   * on road cells. The tiny second term is how far the light reaches overall,
+   * which only decides ties: a piece that sends the beam across the board is a
+   * better guess than one that sends it straight off the edge, and that is what
+   * makes a setup mirror in a chain orient itself the way the player intends.
+   */
   R.beam.coverageScore = function (state) {
     var res = R.beam.solve(state, null, 0, scratch());
     var k = state.grid.kind;
-    var total = 0;
+    var road = 0;
+    var reach = 0;
     for (var i = 0; i < CELLS; i++) {
-      if (res.lit[i] > 0 && (k[i] === R.ROAD || k[i] === R.SPAWN)) total += res.lit[i];
+      if (res.lit[i] <= 0) continue;
+      reach++;
+      if (k[i] === R.ROAD || k[i] === R.SPAWN) road += res.lit[i];
     }
-    return total;
+    return road + reach * 1e-3;
   };
 
   R.beam.ORIENT_COUNT = { mirror: 2, splitter: 2, reflector: 1, lamp: 4 };

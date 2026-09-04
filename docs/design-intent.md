@@ -14,7 +14,7 @@ Tap PLAY. The beam is already firing. Tap a tile in its path to place a mirror a
 
 ## 4. Core loop
 
-Read the incoming wave, route the beam so it runs along road segments in the right direction, watch the wave burn, spend the gold it pays, repeat. The feedback is all on the board: the beam visibly thins and reddens past every shadow it passes through, LIT n/25 counts how much road is burning, and core HP counts what got through. Clear twelve waves to win; lose when the core's HP is gone; Endless continues afterwards for score. Each wave's composition changes which route is best, so the same board keeps asking a new question.
+Read the incoming wave, route the beam so it runs along road segments in the right direction, watch the wave burn, spend the gold it pays, repeat. The feedback is all on the board: the beam visibly thins and reddens past every shadow it passes through, LIT n/31 counts how much road is burning, and core HP counts what got through. Clear twelve waves to win; lose when the core's HP is gone; Endless continues afterwards for score. Each wave's composition changes which route is best, so the same board keeps asking a new question.
 
 ## 5. What is in this prototype
 

@@ -149,7 +149,7 @@ You are a keeper of light. The fantasy is not "commander with an army" but "engi
 
 ## 8. Game Overview
 
-- Portrait board of 8 columns × 12 rows. A winding road enters at the top-left and ends at the Lumen Core in the bottom-right corner.
+- Portrait board of 8 columns × 12 rows. A road switchbacks down the board from a portal near the top and ends at the Lumen Core in the bottom-right corner.
 - The Core fires one beam straight up its column, forever. Untouched, it only crosses the road once, right before the core.
 - The player buys and places pieces on empty tiles: **Mirror** (bends 90°), **Splitter** (bends and passes, two weaker beams), **Reflector** (sends the beam back the way it came), **Lamp** (a second, weaker light source). The Core can be upgraded to fire a stronger beam, which also strengthens Lamps.
 - Enemies walk the road. Any enemy standing in a lit cell takes damage every frame equal to the beam's power at that cell. Each enemy the beam passes through absorbs part of it, so the beam dims as it goes.
@@ -173,7 +173,7 @@ Loop period: one wave, 20–40 seconds. Repeatable inside a session (12 waves + 
 
 1. Title card: "REFRACT", one line of premise, three icon-illustrated control lines, a large PLAY button. (One tap.)
 2. Board appears. The Core pulses, its beam already shooting up the right column, faintly lighting the tiles it crosses. Wave 1 countdown starts (10 s). The Mirror button at the bottom is pre-selected and pulsing. A hint reads: "Tap a lit tile to place a mirror."
-3. The player taps any tile on the beam column. A mirror pops in with a chime; the beam sweeps sideways at high speed across the board; if it lands along a road segment those road tiles light up. "LIT 1/25" in the HUD jumps to e.g. "LIT 6/25" with a pulse.
+3. The player taps any tile on the beam column. A mirror pops in with a chime; the beam sweeps sideways at high speed across the board; if it lands along a road segment those road tiles light up. "LIT 1/31" in the HUD jumps to e.g. "LIT 7/31" with a pulse.
 4. Wave 1's four motes come down the road and burn in the light. Gold floats to the counter. The player already understands the whole game.
 
 If the player does nothing: wave 1 arrives at ~10 s, the four motes take the single-cell zap before the core, survive, leak 4 HP total. The Core flashes red each time, the HP number shakes. The hint pulses again. Pressure is legible and survivable.
@@ -183,7 +183,7 @@ If the player does nothing: wave 1 arrives at ~10 s, the four motes take the sin
 | Time (1×) | What happens | What the player is learning |
 |---|---|---|
 | 0:00–0:15 | Title → board, first mirror placed, beam bends | The verb. Light kills. |
-| 0:15–1:00 | Waves 1–2. Second mirror, maybe a third. Splitter unlocks after wave 1 clears. | Along-road beats across-road. "LIT n/25" is the goal number. |
+| 0:15–1:00 | Waves 1–2. Second mirror, maybe a third. Splitter unlocks after wave 1 clears. | Along-road beats across-road. "LIT n/31" is the goal number. |
 | 1:00–2:30 | Waves 3–4. Runners (fast). Reflector unlocks after wave 3. First Core upgrade affordable. | Coverage in cells × time in cells = damage. Fast enemies need long lit segments. |
 | 2:30–4:00 | Waves 5–6. First Brutes (absorb 70%), first Swarm. | Absorption. Who is in front matters. Splitting beats swarms; concentration beats brutes. Reflector reverses the order. |
 | 4:00–6:00 | Waves 7–9. Lamp unlocks after wave 6. Dense mixed waves. | Multiple sources, Reflector return passes on separate routes, prioritising segments by enemy type. |
@@ -196,50 +196,56 @@ If the player does nothing: wave 1 arrives at ~10 s, the four motes take the sin
 ### 12.1 Board and coordinates
 
 - Grid: `COLS = 8`, `ROWS = 12`. Column `c` in 0..7 left→right; row `r` in 0..11 top→bottom. Cell index `i = r * 8 + c`.
-- Cell kinds: `EMPTY` (buildable), `ROAD` (enemies walk here; not buildable), `CORE` (7,11), `SPAWN` (1,0) (a road cell with a portal decoration; not buildable).
+- Cell kinds: `EMPTY` (buildable), `ROAD` (enemies walk here; not buildable), `CORE` (7,11), `SPAWN` (5,0) (a road cell with a portal decoration; not buildable).
 - Directions: `N = 0` (row − 1), `E = 1` (col + 1), `S = 2` (row + 1), `W = 3` (col − 1). Opposite = `(d + 2) % 4`.
 - World mapping (Three.js): `x = c − 3.5`, `z = r − 5.5`, `y = 0` on the board plane. +z points toward the bottom of the screen.
 
-### 12.2 The road (fixed map "Stairway")
+### 12.2 The road (fixed map "Switchback")
 
-Ordered path cells (spawn → core). Enemies are spawned one cell above the board at virtual cell (1, −1) and walk in.
+Ordered path cells (spawn to core). Enemies are spawned one cell above the board at virtual cell (5, -1) and walk in.
 
 ```
-(1,0) (1,1) (1,2) (1,3)                       segment 1: south, column 1
-(2,3) (3,3) (4,3) (5,3) (6,3)                 segment 2: east, row 3
-(6,4) (6,5) (6,6)                             segment 3: south, column 6
-(5,6) (4,6) (3,6) (2,6)                       segment 4: west, row 6
-(2,7) (2,8) (2,9) (2,10)                      segment 5: south, column 2
-(3,10) (4,10) (5,10) (6,10) (7,10)            segment 6: east, row 10
+(5,0) (5,1) (5,2)                             segment 1: south, column 5
+(4,2) (3,2) (2,2) (1,2)                       segment 2: west, row 2
+(1,3) (1,4)                                   segment 3: south, column 1
+(2,4) (3,4) (4,4) (5,4) (6,4)                 segment 4: east, row 4
+(6,5) (6,6)                                   segment 5: south, column 6
+(5,6) (4,6) (3,6) (2,6) (1,6)                 segment 6: west, row 6
+(1,7) (1,8)                                   segment 7: south, column 1
+(2,8) (3,8) (4,8) (5,8) (6,8)                 segment 8: east, row 8
+(6,9) (6,10)                                  segment 9: south, column 6
+(7,10)                                        segment 10: east, row 10
 (7,11)                                        CORE
 ```
 
-25 road cells + core. Path length for movement = 26 cells from the virtual start.
+31 road cells + core. Path length for movement = 32 cells from the virtual start.
 
 ASCII (S = spawn, # = road, C = core, `|` = the default beam column, `.` = buildable):
 
 ```
       c0 c1 c2 c3 c4 c5 c6 c7
-r0     .  S  .  .  .  .  .  |
-r1     .  #  .  .  .  .  .  |
-r2     .  #  .  .  .  .  .  |
-r3     .  #  #  #  #  #  #  |
-r4     .  .  .  .  .  .  #  |
+r0     .  .  .  .  .  S  .  |
+r1     .  .  .  .  .  #  .  |
+r2     .  #  #  #  #  #  .  |
+r3     .  #  .  .  .  .  .  |
+r4     .  #  #  #  #  #  #  |
 r5     .  .  .  .  .  .  #  |
-r6     .  .  #  #  #  #  #  |
-r7     .  .  #  .  .  .  .  |
-r8     .  .  #  .  .  .  .  |
-r9     .  .  #  .  .  .  .  |
-r10    .  .  #  #  #  #  #  #
+r6     .  #  #  #  #  #  #  |
+r7     .  #  .  .  .  .  .  |
+r8     .  #  #  #  #  #  #  |
+r9     .  .  .  .  .  .  #  |
+r10    .  .  .  .  .  .  #  #
 r11    .  .  .  .  .  .  .  C
 ```
 
 Why this map works (do not change it without a design reason):
+
 - The default beam (column 7, going north) touches only the corner road cell (7,10). The player must act.
-- A mirror at (7,3) turns the beam west along the entire row-3 road (6 cells). A mirror at (7,6) turns it along row 6 (5 cells). Both are one-tap "aha" moments.
-- Column 2 is a "combo line": a beam travelling south down column 2 crosses row 3 and then runs along segment 5 (6 road cells in one line).
-- Every straight road segment has at least one open extension line, so every segment can be lit lengthwise with enough mirrors.
-- Segment 6 (row 10) can only be lit lengthwise from the west, because its east end is the core corner. This creates a long-route reward.
+- **Column 7 is a trunk, not a wall.** Four long sweeps run at rows 2, 4, 6 and 8, and the core beam runs up past all four of them. Because light meets the lowest piece first, a mirror at (7,8) claims the row 8 sweep and starves everything above it; reaching a second sweep costs either a splitter on the trunk or a chain out to column 0 and back. That single fact is what makes splitters structural rather than optional.
+- **Every long sweep has a buildable cell at both ends.** Rows 4, 6 and 8 run cols 1..6 with columns 0 and 7 open; row 2 runs cols 1..5 with column 0 and cell (6,2) open. Eight of the ten straight runs are open at both ends, so any sweep can be entered from either direction, and direction is a genuine choice on each of them rather than a property of the map.
+- Columns 0 and 7 are clear top to bottom, so a beam can be carried the full height of the board and re-entered anywhere. This is what lets a Reflector sit at the far end of a sweep and send a second pass back through it, and what gives a Lamp on column 0 an independent network that never touches the core's chain.
+- The four connectors (columns 1 and 6, three cells each) are short on purpose: they are worth crossing but never worth a dedicated chain, so the interesting decisions stay on the sweeps.
+- Measured on this map with every tool unlocked: four distinct opening mirrors are within 15% of each other, five late-game layouts are viable, and a full build using all four piece types draws 18 beam segments and lights 23 of 31 road cells.
 
 ### 12.3 Light sources
 
@@ -367,7 +373,7 @@ Within one session, the player sees all of these:
 
 - **Toolset unlocks:** Splitter after wave 1, Reflector after wave 3, Lamp after wave 6. Each unlock animates in the palette with a chime and a one-line hint.
 - **Core levels 1→6:** the beam visibly thickens and brightens with each level. Lamps strengthen with it.
-- **The light network grows across the board.** The HUD's "LIT n/25" rises. By the late game, most of the road glows.
+- **The light network grows across the board.** The HUD's "LIT n/31" rises. By the late game, most of the road glows.
 - **Enemy roster grows:** motes → runners → brutes → swarms → Brute-King → Umbra.
 - **Score and best score.**
 - **Endless** after victory for players who want more.
@@ -509,7 +515,7 @@ Keyboard (development convenience only, harmless in the build): `1–4` select p
 
 **Title screen:** "REFRACT" wordmark (CSS text with glow), tagline "Bend the light. Burn the shadows.", three control lines with tiny icons (mirror, tap, beam), best score, PLAY button (min 64 px tall). Also a one-line note: "Portrait · single player · works offline".
 
-**HUD row:** ♥ `coreHp`/20 (flashes red on leak) · ◆ `gold` (bumps on gain) · WAVE `n`/12 (or "ENDLESS n") · LIT `lit`/25 (pulses green when it increases) · buttons ⏸ 2× ? 🔊.
+**HUD row:** ♥ `coreHp`/20 (flashes red on leak) · ◆ `gold` (bumps on gain) · WAVE `n`/12 (or "ENDLESS n") · LIT `lit`/31 (pulses green when it increases) · buttons ⏸ 2× ? 🔊.
 
 **Incoming strip:** during countdown: "NEXT: " + enemy icons in spawn order (front first, boss icon larger) + "in 7s". During a wave: "WAVE 5 · 9 left". Shows unlock notices briefly ("SPLITTER UNLOCKED").
 
@@ -769,7 +775,7 @@ IMPLEMENT: `05_beam.js` solver (full 12.5 including splitter/reflector/lamp bran
 
 DO NOT IMPLEMENT YET: enemies, waves, other pieces in the palette, selling, overlays, audio, particles.
 
-BROWSER TEST: load; verify the default beam goes up column 7 and lights (7,10) (LIT 1/25); tap (7,3) → LIT 7/25 (6 along row 3 + the corner cell (7,10)); tap the mirror → flips → beam goes east off-board → LIT 1/25; tap (7,6) with a fresh board → LIT 6/25; call `__REFRACT.setGold(200)` and build the 3-mirror chain (7,3) `\`, (0,3) `/`, (0,10) `\` → LIT 12/25 (1 corner + 6 on row 3 + 5 new on row 10; (7,10) is counted once); try placing on a road tile → rejected; rapid double-tap on one tile → one mirror; check gold decreases by 20 each; with 15 gold left a tap does nothing but show "Need 20"; resize mid-state; console clean.
+BROWSER TEST: load; verify the default beam goes up column 7 and lights (7,10) (LIT 1/31); tap (7,4) → LIT 7/31 (6 along row 4 + the corner cell (7,10)); tap the mirror → select → FLIP → beam goes east off-board → LIT 1/31; tap (7,6) with a fresh board → LIT 7/31; call `__REFRACT.setGold(200)` and build the 3-mirror chain (7,8) `\`, (0,8) `\`, (0,6) `/` → LIT 13/31 (1 corner + 6 on row 8 + 6 on row 6); try placing on a road tile → rejected; rapid double-tap on one tile → one mirror; check gold decreases by 20 each; with 15 gold left a tap does nothing but show "Need 20"; resize mid-state; console clean.
 
 ACCEPTANCE: unit tests pass; the browser scenarios above match exactly.
 
@@ -797,7 +803,7 @@ IMPLEMENT: phases (`title`, `building`, `wave`, `paused`, `won`, `lost`); title 
 
 DO NOT IMPLEMENT YET: splitter/reflector/lamp UI, core upgrade, audio, particles, hints.
 
-BROWSER TEST: force loss via leaks → defeat overlay → TRY AGAIN → verify state is pristine (gold 40, HP 20, wave 0, no pieces, LIT 1/25, no leftover enemies or beam segments; `renderer.info` mesh counts equal to a fresh load); use debug `forceWin()` → victory → PLAY AGAIN → pristine; do five consecutive restarts and compare snapshots; pause/resume during a wave (enemies freeze); hide the tab and return (paused); console clean.
+BROWSER TEST: force loss via leaks → defeat overlay → TRY AGAIN → verify state is pristine (gold 40, HP 20, wave 0, no pieces, LIT 1/31, no leftover enemies or beam segments; `renderer.info` mesh counts equal to a fresh load); use debug `forceWin()` → victory → PLAY AGAIN → pristine; do five consecutive restarts and compare snapshots; pause/resume during a wave (enemies freeze); hide the tab and return (paused); console clean.
 
 ACCEPTANCE: restart leaves no residue (snapshot equality, pool counts); both overlays reachable through real play (loss) and debug (win).
 
@@ -1052,7 +1058,7 @@ Never change the core concept based on one tester. Log every session in `docs/pl
 
 - **Engagement (30%)**: the beam is live at second zero; every wave changes the best answer; visible growth (LIT, thickness, unlocks); 2× speed; endless; score to beat. Judges should feel "one more wave" and "let me try the reflector route".
 - **Playability (25%)**: deterministic grid logic, exhaustive edge-case handling, restart parity tests, fixed timestep, offline verified, touch-only controls, large targets. Zero console noise.
-- **Core Loop (20%)**: place → wave → gold → spend, with real-time feedback and a clear number to push (LIT n/25, Core HP). Explained in the design intent's core loop section in two sentences.
+- **Core Loop (20%)**: place → wave → gold → spend, with real-time feedback and a clear number to push (LIT n/31, Core HP). Explained in the design intent's core loop section in two sentences.
 - **Focus (15%)**: one map, four pieces, five enemy types plus a boss, twelve waves, no meta-progression, no menus beyond title/help/results. Nothing half-built: every stretch item is either complete or absent.
 - **Originality (10%)**: no towers; one beam; direction and order mechanics; the Reflector's reverse pass.
 - **AI ranking phase**: clean, readable single file with section banners and a plain technical header comment; no evaluative comments; obvious genre keywords in code (`wave`, `enemy`, `defense`, `core`), the game reachable within one tap.
@@ -1120,7 +1126,7 @@ Fixed sections, in this order, total ≤ 500 words, text only, no identifying in
 1. **Game title and genre** — "REFRACT — Tower Defense & Strategy."
 2. **Target player and pitch** — Players who like short, tactical mobile sessions and light puzzle games; they want a five-to-eight-minute run where each wave is a small spatial problem and a plan that visibly works. REFRACT is a tower defense with no towers: one beam of light from the crystal you defend, bent with mirrors so it burns the shadows walking the road.
 3. **How to play (controls)** — Tap PLAY. Tap a lit tile to place a mirror; the beam bends instantly. Tap a placed piece to flip, move or sell it; drag to move. Buttons at the bottom choose Mirror, Splitter, Reflector, Lamp. CORE upgrades the beam. NEXT WAVE starts early for bonus gold. 2× speed, pause and help at the top.
-4. **Core loop** — Read the incoming wave, route the beam so it runs along road segments in the right direction, watch the wave burn, spend the gold, repeat. Feedback: the beam visibly dims past each enemy, LIT n/25 shows road coverage, core HP shows leaks. Win by clearing 12 waves; lose when the core's HP is gone; Endless after victory. It is fun to repeat because every wave's composition changes which route is best.
+4. **Core loop** — Read the incoming wave, route the beam so it runs along road segments in the right direction, watch the wave burn, spend the gold, repeat. Feedback: the beam visibly dims past each enemy, LIT n/31 shows road coverage, core HP shows leaks. Win by clearing 12 waves; lose when the core's HP is gone; Endless after victory. It is fun to repeat because every wave's composition changes which route is best.
 5. **What is in this prototype** — One map; four pieces; six-level core; six enemy types including two bosses; twelve scripted waves plus endless; hints and help; score with best score; synthesized audio; full offline single-file build. Not included: additional maps, meta-progression.
 6. **Progression and signature twist** — Unlocks at waves 2, 4 and 7; core levels thicken the beam; the light network spreads across the board; enemies escalate from motes to brutes, swarms and Umbra. Signature twist to validate: absorption makes beam direction matter, so the same mirrors can be right or wrong depending on who leads the wave.
 7. **Future-state vision** — A full game with hand-built maps that each teach a new optical piece (prisms, lenses, coloured light and colour-keyed enemies), daily seeded challenges, and a score chase, rebuilt natively on the creation tools.

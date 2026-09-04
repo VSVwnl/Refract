@@ -54,12 +54,12 @@ module.exports = { test: test, eq: eq, near: near, ok: ok };
 
 /* ---------- grid and map ---------- */
 
-test('board has 25 road cells and a 26 cell path', function () {
+test('board has 31 road cells and a 32 cell path', function () {
   const s = R.resetState(1);
-  eq(s.roadCells, 25, 'road cells');
-  eq(s.path.length, 26, 'path length');
+  eq(s.roadCells, 31, 'road cells');
+  eq(s.path.length, 32, 'path length');
   eq(s.grid.kind[R.grid.idx(7, 11)], R.CORE, 'core kind');
-  eq(s.grid.kind[R.grid.idx(1, 0)], R.SPAWN, 'spawn kind');
+  eq(s.grid.kind[R.grid.idx(5, 0)], R.SPAWN, 'spawn kind');
 });
 
 test('path steps are always to an orthogonal neighbour', function () {

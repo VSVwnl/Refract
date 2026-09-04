@@ -3,4 +3,3 @@ dist/
 .playwright/
 shots/
 *.log
-play/
