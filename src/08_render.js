@@ -483,6 +483,7 @@
     dyn.beamGlow = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 2);
     dyn.beamCore = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 3);
     dyn.bounce = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), 32, 4);
+    dyn.previewBeam = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), 64, 1);
 
     /* Mirror: a thin bright slab standing on the tile at 45 degrees. */
     dyn.mirrorBody = makeInstanced(
@@ -584,6 +585,33 @@
     f.finish();
   }
 
+  var SWEEP_SPEED = 60;
+  var sweepLength = 999;
+  var lastRouteVersion = -1;
+
+  /* A re-routed beam travels out from the source instead of appearing at once. */
+  function advanceSweep(state, dtReal) {
+    if (state.routeVersion !== lastRouteVersion) {
+      lastRouteVersion = state.routeVersion;
+      sweepLength = 0;
+    }
+    if (sweepLength < 999) sweepLength += SWEEP_SPEED * dtReal;
+    if (sweepLength > 200) sweepLength = 999;
+  }
+
+  rd.sweepLength = function () {
+    return sweepLength;
+  };
+
+  rd.previewCount = function () {
+    return dyn.previewBeam ? dyn.previewBeam.__previewCount || 0 : 0;
+  };
+
+  rd.resetSweep = function () {
+    sweepLength = 999;
+    lastRouteVersion = -1;
+  };
+
   function drawBeams(state) {
     var glow = new Filler(dyn.beamGlow);
     var core = new Filler(dyn.beamCore);
@@ -595,15 +623,28 @@
       var s = segs[i];
       var len = Math.abs(s.x1 - s.x0) + Math.abs(s.z1 - s.z0);
       if (len <= 0.001) continue;
-      var mx = (s.x0 + s.x1) / 2;
-      var mz = (s.z0 + s.z1) / 2;
+
+      /* Trim the far end of the segment while the sweep is still travelling. */
+      var visible = len;
+      if (sweepLength < 999) {
+        var avail = sweepLength - s.dist0;
+        if (avail <= 0) continue;
+        if (avail < len) visible = avail;
+      }
+      var fx = s.x1 === s.x0 ? 0 : (s.x1 - s.x0) / len;
+      var fz = s.z1 === s.z0 ? 0 : (s.z1 - s.z0) / len;
+      var ex = s.x0 + fx * visible;
+      var ez = s.z0 + fz * visible;
+      var mx = (s.x0 + ex) / 2;
+      var mz = (s.z0 + ez) / 2;
+
       var rot = dirAngle(s.dir);
       var power = s.powerStart;
       var frac = s.sourcePower > 0 ? R.util.clamp(power / s.sourcePower, 0, 1) : 0;
       var col = beamColor(frac);
       var w = beamWidth(power);
-      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, len + 0.04, R.util.mixColor(0x000000, col, 0.09 + 0.21 * frac));
-      core.push(mx, BEAM_Y + 0.005, mz, rot, w * (0.34 + 0.2 * frac), len + 0.04,
+      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, visible + 0.04, R.util.mixColor(0x000000, col, 0.09 + 0.21 * frac));
+      core.push(mx, BEAM_Y + 0.005, mz, rot, w * (0.34 + 0.2 * frac), visible + 0.04,
         R.util.mixColor(0x000000, col, 0.34 + 0.56 * frac));
       if (s.bendAtStart) {
         bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.2 + 0.3 * frac));
@@ -612,6 +653,54 @@
     glow.finish();
     core.finish();
     bounce.finish();
+  }
+
+  /* ---------- ghost beam while dragging ---------- */
+
+  var previewKey = '';
+  var previewResult = null;
+
+  function drawPreview(state) {
+    var d = state.ui.drag;
+    var f = new Filler(dyn.previewBeam);
+    if (!d || !d.dragging || !d.cell || !d.valid) {
+      previewKey = '';
+      dyn.previewBeam.__previewCount = 0;
+      f.finish();
+      return;
+    }
+
+    var orient = 0;
+    var removeIndex = null;
+    if (d.kind === 'piece') {
+      var p = R.pieces.byId(state, d.pieceId);
+      if (p) {
+        orient = p.type === 'lamp' ? p.dir : p.orient;
+        removeIndex = R.grid.idx(d.fromC, d.fromR);
+      }
+    } else {
+      orient = R.beam.bestOrientation(state, d.type, d.cell.c, d.cell.r);
+    }
+
+    var key = d.type + '|' + d.cell.i + '|' + orient + '|' + state.coreLevel + '|' + state.pieces.size;
+    if (key !== previewKey) {
+      previewKey = key;
+      previewResult = R.beam.preview(state, d.type, d.cell.c, d.cell.r, orient, removeIndex);
+    }
+    if (!previewResult) {
+      dyn.previewBeam.__previewCount = 0;
+      f.finish();
+      return;
+    }
+    for (var i = 0; i < previewResult.segCount; i++) {
+      var s = previewResult.segments[i];
+      var len = Math.abs(s.x1 - s.x0) + Math.abs(s.z1 - s.z0);
+      if (len <= 0.001) continue;
+      f.push((s.x0 + s.x1) / 2, BEAM_Y + 0.02, (s.z0 + s.z1) / 2, dirAngle(s.dir),
+        0.30, len, 0x1d5f77);
+    }
+    dyn.previewBeam.__previewCount = f.n;
+    f.finish();
   }
 
   var POP_TIME = 0.22;
@@ -881,9 +970,11 @@
     }
   }
 
-  rd.drawDynamic = function (state) {
+  rd.drawDynamic = function (state, dtReal) {
+    advanceSweep(state, dtReal || 0);
     drawLitTiles(state);
     drawBeams(state);
+    drawPreview(state);
     drawPieces(state);
     drawEnemies(state);
     drawHighlights(state);

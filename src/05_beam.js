@@ -30,7 +30,8 @@
       powerStart: 0,
       powerEnd: 0,
       sourceId: 0,
-      sourcePower: 0
+      sourcePower: 0,
+      dist0: 0
     };
   }
 
@@ -83,6 +84,8 @@
   var bendPending = false;
   var currentSourcePower = 1;
 
+  var segDistance = 0;
+
   function emit(x0, z0, x1, z1, dir, c0, r0, c1, r1, powerStart, powerEnd, sourceId) {
     if (out.segCount >= B.MAX_SEGMENTS) {
       out.overflow = true;
@@ -98,12 +101,18 @@
     s.powerEnd = powerEnd;
     s.sourceId = sourceId;
     s.sourcePower = currentSourcePower;
+    s.dist0 = segDistance;
     return true;
   }
 
-  function trace(startC, startR, dir, power, depth, sourceId, fromPiece) {
+  function trace(startC, startR, dir, power, depth, sourceId, fromPiece, dist) {
     if (depth > B.MAX_DEPTH || power < B.MIN_POWER || out.overflow) return;
     bendPending = !!fromPiece;
+
+    /* Distance from the source, in cells; the renderer sweeps the beam out
+       along this so a re-route travels rather than appearing all at once. */
+    var travelled = dist || 0;
+    var segStartDist = travelled;
 
     var DC = R.grid.DC;
     var DR = R.grid.DR;
@@ -122,6 +131,7 @@
       var edgeZ = R.grid.worldZ(r) + DR[dir] * 0.5;
 
       if (!R.grid.inBounds(nc, nr)) {
+        segDistance = segStartDist;
         emit(segX, segZ, edgeX, edgeZ, dir, segC, segR, c, r, segPower, power, sourceId);
         return;
       }
@@ -130,6 +140,7 @@
       var key = i * 4 + dir;
       if (visitStamp[key] === visitGen) {
         /* Light never retraces the same cell in the same direction. */
+        segDistance = segStartDist;
         emit(segX, segZ, edgeX, edgeZ, dir, segC, segR, c, r, segPower, power, sourceId);
         return;
       }
@@ -137,6 +148,7 @@
 
       c = nc;
       r = nr;
+      travelled += 1;
       if (power > out.lit[i]) out.lit[i] = power;
       out.totalPower += power;
 
@@ -157,12 +169,14 @@
           /* Step the rendered beam down at the far edge of this cell. */
           var sx = R.grid.worldX(c) + DC[dir] * 0.5;
           var sz = R.grid.worldZ(r) + DR[dir] * 0.5;
+          segDistance = segStartDist;
           if (!emit(segX, segZ, sx, sz, dir, segC, segR, c, r, segPower, before, sourceId)) return;
           segX = sx;
           segZ = sz;
           segC = c;
           segR = r;
           segPower = power;
+          segStartDist = travelled;
         }
         if (power < B.MIN_POWER) return;
       }
@@ -173,20 +187,22 @@
       if (piece) {
         var px = R.grid.worldX(c);
         var pz = R.grid.worldZ(r);
+        segDistance = segStartDist;
         if (!emit(segX, segZ, px, pz, dir, segC, segR, c, r, segPower, power, sourceId)) return;
         if (piece.type === 'mirror') {
-          trace(c, r, R.grid.reflect(dir, piece.orient), power, depth + 1, sourceId, true);
+          trace(c, r, R.grid.reflect(dir, piece.orient), power, depth + 1, sourceId, true, travelled);
         } else if (piece.type === 'splitter') {
-          trace(c, r, dir, power * B.SPLIT_FACTOR, depth + 1, sourceId, true);
-          trace(c, r, R.grid.reflect(dir, piece.orient), power * B.SPLIT_FACTOR, depth + 1, sourceId, true);
+          trace(c, r, dir, power * B.SPLIT_FACTOR, depth + 1, sourceId, true, travelled);
+          trace(c, r, R.grid.reflect(dir, piece.orient), power * B.SPLIT_FACTOR, depth + 1, sourceId, true, travelled);
         } else if (piece.type === 'reflector') {
-          trace(c, r, R.grid.opposite(dir), power * B.REFLECT_FACTOR, depth + 1, sourceId, true);
+          trace(c, r, R.grid.opposite(dir), power * B.REFLECT_FACTOR, depth + 1, sourceId, true, travelled);
         }
         /* A lamp absorbs whatever reaches it. */
         return;
       }
 
       if (kind[i] === R.CORE) {
+        segDistance = segStartDist;
         emit(segX, segZ, R.grid.worldX(c), R.grid.worldZ(r), dir, segC, segR, c, r, segPower, power, sourceId);
         return;
       }
@@ -226,7 +242,7 @@
 
     visitGen++;
     currentSourcePower = corePower;
-    trace(R.MAP.core[0], R.MAP.core[1], R.N, corePower, 0, sourceId);
+    trace(R.MAP.core[0], R.MAP.core[1], R.N, corePower, 0, sourceId, false, 0);
 
     var lampPower = R.beam.lampPower(state.coreLevel);
     var it = pieces.values();
@@ -237,7 +253,7 @@
         sourceId++;
         visitGen++;
         currentSourcePower = lampPower;
-        trace(p.c, p.r, p.dir, lampPower, 0, sourceId);
+        trace(p.c, p.r, p.dir, lampPower, 0, sourceId, false, 0);
       }
       entry = it.next();
     }
@@ -256,8 +272,13 @@
     return result;
   };
 
-  /* Refresh the live beam without applying damage (used after any edit). */
+  /*
+   * Refresh the live beam without applying damage. This runs only after an
+   * edit, so the route version it bumps is what the renderer watches to know
+   * the beam should sweep out again.
+   */
   R.beam.recompute = function (state) {
+    state.routeVersion++;
     R.beam.solve(state, R.enemies ? R.enemies.occupancy(state) : null, 0, state.beam);
     return state.beam;
   };
@@ -321,10 +342,18 @@
     return best;
   };
 
+  var previewScratch = null;
+
   /* Preview result for a hypothetical piece; used by the drag ghost. */
-  R.beam.preview = function (state, type, c, r, orient) {
+  R.beam.preview = function (state, type, c, r, orient, removeIndex) {
+    if (!previewScratch) previewScratch = R.beam.makeResult();
     var i = R.grid.idx(c, r);
     var existing = state.pieces.get(i);
+    var moved = null;
+    if (removeIndex !== undefined && removeIndex !== null && removeIndex !== i) {
+      moved = state.pieces.get(removeIndex);
+      if (moved) state.pieces.delete(removeIndex);
+    }
     var probe = {
       id: -1,
       type: type,
@@ -337,9 +366,10 @@
       inactiveUntil: -1
     };
     state.pieces.set(i, probe);
-    var res = R.beam.solve(state, null, 0, scratch());
+    var res = R.beam.solve(state, null, 0, previewScratch);
     if (existing) state.pieces.set(i, existing);
     else state.pieces.delete(i);
+    if (moved) state.pieces.set(removeIndex, moved);
     return res;
   };
 })(typeof window !== 'undefined' ? window : globalThis);

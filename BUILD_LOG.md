@@ -356,3 +356,57 @@ Screenshots `shots/escalation-390x844-a-all-enemies.png` and `-a-enemies-zoom.pn
 **Result:** All six enemy types, both bosses, HP scaling, a real victory and Endless all work. Whole suite: 192 browser checks plus 26 Node tests passing.
 
 **Next step:** Phase 6 — hints, the Help overlay, defeat tips by cause, the early-call display, the beam sweep and the drag preview.
+
+
+### Session 1 — 2026-09-03 — Phase 6: teaching and strategic depth
+
+**Goal:** The player can see the decisions and learn the rules without reading anything long.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 6.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile-emulation tests.
+
+**Work completed:**
+
+- Hint toasts, each shown at most once per run and never while a piece is selected or a drag is in progress (so a hint can never sit under the action bar): the opening "tap a tile on the beam", the flip/move/sell hint after the first placement, the along-the-road rule after wave 1, the core-power nudge after wave 3, a brute hint the first time a brute spawns, a swarm hint the first time swarmlings spawn, and a one-line explanation with each unlock.
+- Help overlay behind the `?` button: nine rows covering all four pieces, the core, burning, shielding, direction and the no-retracing rule. It pauses the game and resumes on BACK.
+- LIT counter pulses whenever road coverage increases.
+- **Beam sweep.** The solver now records each segment's distance from its source, and the renderer trims segments to a sweep length that grows at 60 cells per second whenever the route changes. Route changes are detected with a `routeVersion` counter bumped only by `R.beam.recompute`, which runs on place, flip, move, sell, undo and core upgrade — so the sweep fires on real re-routes and not on the 60-per-second solves during a wave.
+- **Ghost beam preview.** While dragging, the exact route the piece would produce is solved with the piece hypothetically in place (and, for a move, hypothetically removed from its old tile) and drawn as a dim cyan beam. The result is cached by target cell and orientation so the solver runs only when the target changes. Palette drags preview the smart orientation; piece drags preview the piece's own orientation.
+- Defeat tips and the early-call bonus display were already in place from Phases 3 and 4; both are covered by tests here.
+
+**Browser testing:** `node tools/qa.js teaching` at 390x844, 32 checks passing, plus the whole suite (layout 8, beam 23, waves 31, runstates 44, toolset 55, escalation 31, teaching 32 = 224 browser checks).
+
+Measurements:
+
+- Hint order confirmed by reading the live DOM: "Tap a tile on the beam..." on PLAY, then "Tap a placed piece to flip, move or sell it." after the first placement. The hint disappears while a piece is selected and a hint already shown does not return.
+- Early call: with 7.3 s left the button offered +11 and paid exactly `ceil(remaining x 1.5)`; the wave started immediately.
+- Help pauses (`phase` becomes `paused`) and BACK resumes to `wave`.
+- Defeat tips: a brute-heavy loss gets the shielding tip, a swarm-heavy loss the split-the-light tip, a runner-heavy loss the lengthwise tip, a plain loss the coverage tip.
+- Sweep length sampled per frame after placing a mirror: 2, 4, 6, 8, 10, 11, 13, 15, 17, 19, 21, 22 cells — the beam travels rather than appearing.
+- Drag preview: two ghost segments while hovering (7,6), cleared on release, and the real beam that results matches the preview at LIT 6.
+- Incoming strip lists wave 12 in spawn order: motes x6, brutes x2, Umbra x1, brutes x2.
+
+Screenshots `shots/teaching-390x844-a-first-hint.png`, `-b-help.png`, `-c-drag-preview.png` reviewed. The help screen fits 390x844 without scrolling and scrolls on shorter screens. Console: no messages from our code.
+
+**Problems found:** No game defects. Two test-authoring errors: a hint assertion that did not account for an earlier hint still being on screen, and a button label read before the next animation frame had refreshed it.
+
+**Fixes:** Both assertions corrected.
+
+**Autonomous playtest questions (after Phase 6):**
+
+- *Is the goal obvious within 10 s?* Yes. The board opens with the beam already firing into the corner road cell, the countdown is visible, and the first hint names the exact action. The title card states the premise in one line before that.
+- *Is the first interaction clear?* Yes: one tap on a tile in the beam's column bends it.
+- *Is placing a mirror satisfying?* The sweep helps a lot; the beam visibly travels out and the lit road cells light up behind it. It still needs sound and a placement pop, which are Phases 8 and 9.
+- *Does the loop work without explanation?* Read the wave, place, watch, spend. The incoming strip and LIT counter carry it. The one thing that is not obvious without the help screen is that direction matters; the hint on the first brute is currently the only in-play teaching for it.
+- *Meaningful decision each wave?* Yes, and the `builds` harness shows spreading the beam thin loses while concentrating it wins.
+- *Does progression visibly affect play?* Yes: core level thickens and brightens the beam, unlocks land at waves 2, 4 and 7 with a palette flash, and LIT climbs.
+- *Any exploits so far?* Sell/undo cannot make money (undo returns exactly the purchase price, sell returns 70 percent). Early call is pure upside for a confident player and is a candidate for review in Phase 10.
+
+**Decisions locked:** No changes to Part 1.
+
+**Balance changes:** none.
+
+**Result:** 26 Node tests and 224 browser checks pass. The rules are teachable in play and the two things a screenshot cannot show — the sweep and the drag preview — are verified by measurement.
+
+**Next step:** Phase 7 — mobile UX across every target viewport.

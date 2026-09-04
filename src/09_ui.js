@@ -156,6 +156,8 @@
     setText(el.waveLbl, s.endless ? 'ENDLESS' : 'WAVE');
     setText(el.waveVal, String(s.wave));
     setText(el.waveSub, s.endless ? '' : '/12');
+    if (s.beam.litRoadCount > lastLit) ui.pulseLit();
+    lastLit = s.beam.litRoadCount;
     setText(el.litVal, String(s.beam.litRoadCount));
     setText(el.litSub, '/' + s.roadCells);
 
@@ -169,6 +171,7 @@
   /* ---------- events ---------- */
 
   var goldFloaterAt = 0;
+  var lastLit = 0;
 
   ui.handleEvents = function (s) {
     for (var i = 0; i < s.events.length; i++) {
@@ -184,6 +187,7 @@
           break;
         case 'place':
           ui.bumpGold();
+          ui.hint(s, 'placed');
           break;
         case 'sell':
           ui.bumpGold();
@@ -208,9 +212,19 @@
         case 'waveclear':
           ui.notice('WAVE ' + e.wave + ' CLEARED  +' + e.bonus, 2.2);
           ui.bumpGold();
+          if (e.wave === 1) ui.hint(s, 'along', 6);
+          if (e.wave === 3) ui.hint(s, 'core', 6);
           break;
         case 'wavestart':
           ui.notice('WAVE ' + e.wave, 1.4);
+          break;
+        case 'runstart':
+          lastLit = 0;
+          ui.hint(s, 'start', 7);
+          break;
+        case 'spawn':
+          if (e.type === 'brute' || e.type === 'bruteking') ui.hint(s, 'brute', 6);
+          if (e.type === 'swarmling') ui.hint(s, 'swarm', 6);
           break;
         case 'endless':
           ui.notice('ENDLESS MODE', 2.4);
@@ -218,6 +232,7 @@
         case 'unlock':
           ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
           ui.flashPalette(e.type);
+          ui.hint(s, e.type, 6);
           break;
         case 'undo':
           ui.bumpGold();
@@ -353,7 +368,8 @@
   /* Rebuild only when the phase changes, so overlays do not flicker. */
   ui.syncOverlay = function (s) {
     var want = null;
-    if (s.phase === 'title') want = 'title';
+    if (s.ui.helpOpen) want = 'help';
+    else if (s.phase === 'title') want = 'title';
     else if (s.phase === 'paused') want = 'pause';
     else if (s.phase === 'lost') want = 'lost';
     else if (s.phase === 'won') want = 'won';
@@ -363,7 +379,8 @@
       closeOverlay();
       return;
     }
-    if (want === 'title') openOverlay('title', buildTitle);
+    if (want === 'help') openOverlay('help', buildHelp);
+    else if (want === 'title') openOverlay('title', buildTitle);
     else if (want === 'pause') openOverlay('pause', buildPause);
     else if (want === 'lost') openOverlay('lost', buildDefeat);
     else if (want === 'won') openOverlay('won', buildVictory);
@@ -387,6 +404,10 @@
     });
     el.btnCore.addEventListener('click', function () {
       R.pieces.upgradeCore(R.state);
+    });
+    el.btnHelp.addEventListener('click', function () {
+      if (R.state.ui.helpOpen) ui.closeHelp();
+      else ui.openHelp();
     });
     el.btnSpeed.addEventListener('click', function () {
       var s = R.state;
@@ -601,6 +622,89 @@
     ghost.style.opacity = d.valid ? '1' : '0.45';
   }
 
+
+  /* ---------- hint toasts ---------- */
+
+  var hintNode = null;
+  var hintUntil = 0;
+  var hintKey = null;
+
+  var HINTS = {
+    start: 'Tap a tile on the beam to bend it along the road.',
+    placed: 'Tap a placed piece to flip, move or sell it.',
+    along: 'Light along the road burns for the whole segment. Across it, only one cell.',
+    brute: 'Brutes soak up the light. Anything walking behind one is shielded.',
+    swarm: 'Swarms drain a beam fast. Split it, or add a second source.',
+    splitter: 'SPLITTER unlocked: passes and bends at the same time, 55% each way.',
+    reflector: 'REFLECTOR unlocked: sends the light back down the same chain at 60%.',
+    lamp: 'LAMP unlocked: a second source, half the core power, aim it anywhere.',
+    core: 'Gold also buys core power. A brighter beam burns everything faster.'
+  };
+
+  function buildHint() {
+    hintNode = node('div', 'hint');
+    hintNode.style.display = 'none';
+    el.overlayHost.appendChild(hintNode);
+  }
+
+  /* Each hint fires at most once per run, and any new one replaces the old. */
+  ui.hint = function (s, key, seconds) {
+    if (!HINTS[key] || s.ui.hintsShown[key]) return;
+    s.ui.hintsShown[key] = true;
+    hintKey = key;
+    hintUntil = realTime + (seconds || 4.5);
+    hintNode.textContent = HINTS[key];
+    hintNode.style.display = 'block';
+  };
+
+  ui.dismissHint = function () {
+    hintUntil = 0;
+  };
+
+  function syncHint(s) {
+    var show = hintKey !== null && realTime < hintUntil && !s.ui.drag && !R.pieces.selected(s);
+    if (cache.hint === show) return;
+    cache.hint = show;
+    hintNode.style.display = show ? 'block' : 'none';
+  }
+
+  /* ---------- help ---------- */
+
+  function buildHelp(wrap) {
+    wrap.appendChild(node('h2', null, 'HOW TO PLAY'));
+    var rows = node('div', 'rows');
+    var lines = [
+      ['MIRROR', 'Bends the beam a quarter turn. No power lost.'],
+      ['SPLITTER', 'Passes straight <b>and</b> bends, at 55% each.'],
+      ['REFLECTOR', 'Sends the light back the way it came at 60%, so it meets the road from the other end.'],
+      ['LAMP', 'A second source at half the core power, aimed wherever you turn it.'],
+      ['CORE', 'Upgrading the core brightens the beam and every lamp with it.'],
+      ['BURNING', 'Anything standing in the light takes damage every moment it stays there. Long lit segments burn for longer than a single crossing.'],
+      ['SHIELDING', 'Every shadow the light passes through takes a bite out of it, so the ones behind take less. Brutes take the biggest bite.'],
+      ['DIRECTION', 'Light meets the road from the end it arrives at. Aim it against the walk to hit the leader, or with the walk to hit the back of the pack first.'],
+      ['LOOPS', 'Light never retraces the same tile in the same direction, so a closed ring of mirrors goes dark.']
+    ];
+    lines.forEach(function (l) {
+      rows.appendChild(node('div', 'row', '<span class="k">' + l[0] + '</span> ' + l[1]));
+    });
+    wrap.appendChild(rows);
+    wrap.appendChild(button('bigbtn', 'BACK', function () { ui.closeHelp(); }));
+  }
+
+  ui.openHelp = function () {
+    var s = R.state;
+    if (s.ui.helpOpen) return;
+    s.ui.helpOpen = true;
+    if (R.isSimulating(s)) R.pause();
+  };
+
+  ui.closeHelp = function () {
+    var s = R.state;
+    if (!s.ui.helpOpen) return;
+    s.ui.helpOpen = false;
+    if (s.phase === 'paused') R.resume();
+  };
+
   /* ---------- lifecycle ---------- */
 
   ui.init = function () {
@@ -632,6 +736,7 @@
     buildActionBar();
     buildUndoChip();
     buildGhost();
+    buildHint();
 
     for (var i = 0; i < FLOATER_POOL; i++) floaters.push(makeFloater());
     ui.el = el;
@@ -648,6 +753,7 @@
     syncActionBar(s);
     syncUndoChip(s);
     syncGhost(s);
+    syncHint(s);
     ui.syncOverlay(s);
   };
 
@@ -656,6 +762,10 @@
     cache = {};
     stripNotice = '';
     stripNoticeUntil = 0;
+    lastLit = 0;
+    hintKey = null;
+    hintUntil = 0;
+    if (hintNode) hintNode.style.display = 'none';
     overlayKind = null;
     if (el.overlayRoot) closeOverlay();
   };

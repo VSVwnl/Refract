@@ -1048,4 +1048,176 @@ module.exports = function (S) {
       'different strategies reach different waves: ' + JSON.stringify(spread));
   };
 
+  /* Phase 6: hints, help, early call, defeat tips, beam sweep, drag preview. */
+  S.teaching = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const hintText = function () {
+      return st(function () {
+        const h = document.querySelector('#boardOverlay .hint');
+        return h && h.style.display !== 'none' ? h.textContent.trim() : null;
+      });
+    };
+    const overlay = function () {
+      return st(function () {
+        const o = document.querySelector('#overlayRoot .overlay');
+        return o ? o.textContent.replace(/\s+/g, ' ').trim() : null;
+      });
+    };
+
+    /* --- the first hint arrives with the board --- */
+    await ctx.tap('#overlayRoot .bigbtn');
+    let h = await hintText();
+    ctx.check(h && h.indexOf('Tap a tile') >= 0, 'the opening hint tells the player what to do: ' + h);
+    await ctx.snap('a-first-hint');
+
+    await ctx.tapCell(7, 3);
+    await ctx.page.waitForTimeout(80);
+    h = await hintText();
+    ctx.check(h && h.indexOf('flip') >= 0, 'placing a piece teaches the next verb: ' + h);
+
+    /* a hint never sits under the action bar */
+    await ctx.tapCell(7, 3);
+    await ctx.page.waitForTimeout(80);
+    ctx.eq(await hintText(), null, 'the hint hides while a piece is selected');
+    await ctx.tapCell(7, 3);
+
+    /* --- hints fire once per run --- */
+    const shown = await st(function () { return Object.keys(R.state.ui.hintsShown).sort().join(','); });
+    ctx.eq(shown, 'placed,start', 'two hints so far');
+    await st(function () { R.ui.hint(R.state, 'start', 5); });
+    await ctx.page.waitForTimeout(60);
+    ctx.check((await hintText() || '').indexOf('Tap a tile') < 0, 'a hint already shown does not come back');
+
+    /* --- early call pays the countdown bonus --- */
+    const early = await st(function () {
+      window.__REFRACT.restart(2100);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      window.__REFRACT.step(3);
+      R.ui.frame(s, 0.016);
+      const before = { gold: s.gold, countdown: s.countdown, label: document.getElementById('btnNext').textContent };
+      const bonus = R.earlyCallBonus(s);
+      R.callWaveEarly(s);
+      return { before: before, bonus: bonus, after: s.gold, phase: s.phase, wave: s.wave };
+    });
+    ctx.log('  early call: ' + JSON.stringify(early));
+    ctx.eq(early.bonus, Math.ceil(early.before.countdown * 1.5), 'bonus is ceil(remaining x 1.5)');
+    ctx.eq(early.after, early.before.gold + early.bonus, 'the bonus is paid');
+    ctx.eq(early.phase, 'wave', 'the wave starts immediately');
+    ctx.check(early.before.label.indexOf(String(early.bonus)) >= 0,
+      'the button shows the bonus on offer (' + early.before.label.replace(/\s+/g, ' ') + ')');
+
+    /* --- help pauses and resumes --- */
+    await st(function () { window.__REFRACT.restart(2101); window.__REFRACT.nextWave(); });
+    await ctx.tap('#btnHelp');
+    let help = await overlay();
+    ctx.check(help.indexOf('HOW TO PLAY') >= 0, 'help opens');
+    ['MIRROR', 'SPLITTER', 'REFLECTOR', 'LAMP', 'SHIELDING', 'DIRECTION', 'LOOPS'].forEach(function (word) {
+      ctx.check(help.indexOf(word) >= 0, 'help explains ' + word);
+    });
+    ctx.eq(await st(function () { return R.state.phase; }), 'paused', 'help pauses the game');
+    await ctx.snap('b-help');
+    await ctx.tap('#overlayRoot .bigbtn');
+    ctx.eq(await st(function () { return R.state.phase; }), 'wave', 'closing help resumes the wave');
+    ctx.eq(await overlay(), null, 'the overlay is gone');
+
+    /* --- defeat tips follow the cause --- */
+    const tipFor = function (leaks) {
+      return st(function (l) {
+        window.__REFRACT.restart(2102);
+        const s = R.state;
+        Object.keys(l).forEach(function (k) { s.leaksBy[k] = l[k]; });
+        s.coreHp = 0;
+        R.endRun(s, false);
+        const o = document.querySelector('#overlayRoot .overlay');
+        return o ? '' : '';
+      }, leaks).then(function () {
+        return ctx.page.waitForTimeout(60).then(function () {
+          return st(function () {
+            const t = document.querySelector('#overlayRoot .tip');
+            return t ? t.textContent.trim() : null;
+          });
+        });
+      });
+    };
+    const bruteTip = await tipFor({ brute: 4, mote: 3 });
+    ctx.check(bruteTip.indexOf('Brutes') === 0, 'brute-heavy loss gets the brute tip');
+    const swarmTip = await tipFor({ swarmling: 12, mote: 2 });
+    ctx.check(swarmTip.indexOf('Swarms') === 0, 'swarm-heavy loss gets the swarm tip');
+    const runnerTip = await tipFor({ runner: 9, mote: 2 });
+    ctx.check(runnerTip.indexOf('Runners') === 0, 'runner-heavy loss gets the runner tip');
+    const moteTip = await tipFor({ mote: 6 });
+    ctx.check(moteTip.indexOf('Light along the road') === 0, 'a plain loss gets the coverage tip');
+    ctx.log('  brute tip: ' + bruteTip);
+
+    /* --- the beam sweeps out instead of appearing --- */
+    const sweep = await st(function () {
+      window.__REFRACT.restart(2103);
+      const s = R.state;
+      s.gold = 500;
+      R.pieces.place(s, 'mirror', 7, 3, 1);
+      return new Promise(function (resolve) {
+        const samples = [];
+        let n = 0;
+        function tick() {
+          samples.push(R.render.sweepLength());
+          if (++n < 12) requestAnimationFrame(tick);
+          else resolve(samples.map(function (x) { return Math.round(x); }));
+        }
+        requestAnimationFrame(tick);
+      });
+    });
+    ctx.log('  sweep length per frame: ' + JSON.stringify(sweep));
+    ctx.check(sweep[0] < 40, 'the sweep starts short');
+    ctx.check(sweep[sweep.length - 1] > sweep[0], 'the sweep grows');
+
+    /* --- ghost beam preview while dragging --- */
+    await st(function () {
+      window.__REFRACT.restart(2104);
+      const s = R.state;
+      s.gold = 500;
+    });
+    const btn = await ctx.page.$('#palette .pbtn[data-type="mirror"]');
+    const box = await btn.boundingBox();
+    const target = await ctx.cellPoint(7, 6);
+    const a = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await ctx.cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: a.x, y: a.y, id: 1 }] });
+    for (let i = 1; i <= 6; i++) {
+      const t = i / 6;
+      await ctx.cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: a.x + (target.x - a.x) * t, y: a.y + (target.y - a.y) * t, id: 1 }]
+      });
+      await ctx.page.waitForTimeout(20);
+    }
+    const preview = await st(function () {
+      return { count: R.render.previewCount(), drag: !!R.state.ui.drag, valid: R.state.ui.drag && R.state.ui.drag.valid };
+    });
+    ctx.log('  drag preview: ' + JSON.stringify(preview));
+    ctx.check(preview.drag && preview.valid, 'the drag is over a valid tile');
+    ctx.check(preview.count >= 2, 'the ghost beam shows the route the piece would make (' + preview.count + ' segments)');
+    await ctx.snap('c-drag-preview');
+    await ctx.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await ctx.page.waitForTimeout(80);
+    ctx.eq(await st(function () { return R.render.previewCount(); }), 0, 'the ghost clears on release');
+    ctx.eq(await st(function () { return R.state.beam.litRoadCount; }), 6, 'the real beam matches what the ghost showed');
+
+    /* --- the incoming strip lists the wave in spawn order --- */
+    const strip = await st(function () {
+      window.__REFRACT.restart(2105);
+      const s = R.state;
+      s.wave = 11;
+      s.phase = 'building';
+      s.countdown = 8;
+      R.ui.frame(s, 0.016);
+      return document.getElementById('strip').textContent.replace(/\s+/g, ' ').trim();
+    });
+    ctx.log('  strip at wave 12: ' + strip);
+    ctx.check(strip.indexOf('NEXT') === 0, 'the strip announces the next wave');
+    const order = await st(function () {
+      return R.enemies.composition(12).map(function (g) { return g.type + 'x' + g.count; }).join(' ');
+    });
+    ctx.eq(order, 'motex6 brutex2 umbrax1 brutex2', 'composition is listed in spawn order');
+  };
+
 };

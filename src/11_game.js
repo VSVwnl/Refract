@@ -80,6 +80,7 @@
     R.state = s;
     R.beam.recompute(s);
     if (R.ui.reset) R.ui.reset();
+    if (R.render.resetSweep) R.render.resetSweep();
     if (R.input.cancel) R.input.cancel();
     accumulator = 0;
     return s;

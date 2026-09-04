@@ -74,6 +74,7 @@
       path: board.path,
       pieces: new Map(),
       nextPieceId: 1,
+      routeVersion: 0,
       lampsPlaced: 0,
       enemies: [],
       nextEnemyId: 1,
@@ -91,6 +92,7 @@
         moveMode: false,
         drag: null,
         hintsShown: {},
+        helpOpen: false,
         undo: null,
         lastResult: null
       },
