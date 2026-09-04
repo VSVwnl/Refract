@@ -14,6 +14,7 @@
   R.render = rd;
 
   rd.ready = false;
+  rd.hitStop = 0;
   rd.cell = 40;
   rd.boardW = 0;
   rd.boardH = 0;
@@ -309,6 +310,7 @@
     rd.tex.ring = ringTexture();
     rd.tex.tileGlow = tileGlowTexture();
     rd.tex.frame = frameTexture();
+    rd.tex.shard = shardTexture();
 
     buildLights();
     buildBoard(state);
@@ -545,6 +547,9 @@
     dyn.pieceObj = new THREE.Object3D();
     buildEnemies();
     buildHighlights();
+    buildParticles();
+    dyn.pulse = makeInstanced(new THREE.PlaneGeometry(1, 1),
+      additiveMaterial(rd.tex.glow, 0xffffff), 6, 9);
   };
 
   /*
@@ -643,9 +648,12 @@
       var frac = s.sourcePower > 0 ? R.util.clamp(power / s.sourcePower, 0, 1) : 0;
       var col = beamColor(frac);
       var w = beamWidth(power);
-      glow.push(mx, BEAM_Y, mz, rot, w * 1.7, visible + 0.04, R.util.mixColor(0x000000, col, 0.09 + 0.21 * frac));
-      core.push(mx, BEAM_Y + 0.005, mz, rot, w * (0.34 + 0.2 * frac), visible + 0.04,
-        R.util.mixColor(0x000000, col, 0.34 + 0.56 * frac));
+      var lift = feel.gutter * (1 + feel.flare);
+      if (feel.flare > 0) col = R.util.mixColor(col, 0xffffff, Math.min(1, feel.flare));
+      glow.push(mx, BEAM_Y, mz, rot, w * 1.7 * (1 + feel.flare * 0.5), visible + 0.04,
+        R.util.mixColor(0x000000, col, (0.09 + 0.21 * frac) * lift));
+      core.push(mx, BEAM_Y + 0.005, mz, rot, w * (0.34 + 0.2 * frac) * (1 + feel.flare * 0.4), visible + 0.04,
+        R.util.mixColor(0x000000, col, (0.34 + 0.56 * frac) * lift));
       if (s.bendAtStart) {
         bounce.push(s.x0, BEAM_Y + 0.01, s.z0, 0, 0.55, 0.55, R.util.mixColor(0x000000, col, 0.2 + 0.3 * frac));
       }
@@ -738,6 +746,12 @@
       var dragging = state.ui.drag && state.ui.drag.pieceId === p.id;
       var dim = (p.inactiveUntil > state.time || dragging) ? 0.45 : 1;
       var diag = p.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
+      var flip = flipTimes[p.id];
+      if (flip) {
+        var ft = (realClock - flip.at) / 0.12;
+        if (ft >= 1) delete flipTimes[p.id];
+        else diag += (1 - R.util.easeOutCubic(ft)) * flip.dir * Math.PI / 2;
+      }
 
       if (p.type === 'mirror') {
         o.position.set(x, PIECE_Y + 0.13 * sc, z);
@@ -771,6 +785,23 @@
       }
       entry = it.next();
     }
+    for (var gi = 0; gi < ghostPieces.length; gi++) {
+      var gp = ghostPieces[gi];
+      var gt = (realClock - gp.at) / 0.24;
+      var gs = Math.max(0.01, 1 - gt) * 1.1;
+      var gdiag = gp.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
+      var gx = R.grid.worldX(gp.c);
+      var gz = R.grid.worldZ(gp.r);
+      var gcol = R.util.mixColor(0x000000, 0xffffff, Math.max(0, 1 - gt));
+      o.position.set(gx, PIECE_Y + 0.13 * gs, gz);
+      o.rotation.set(0, gp.type === 'lamp' ? 0 : gdiag, 0);
+      o.scale.set(gs, gs, gs);
+      var target = gp.type === 'mirror' ? fills.mirrorBody
+        : gp.type === 'splitter' ? fills.splitterBody
+          : gp.type === 'reflector' ? fills.reflectorCup : fills.lampBody;
+      target.pushObject(o, gcol);
+    }
+
     Object.keys(fills).forEach(function (k) { fills[k].finish(); });
   }
 
@@ -914,6 +945,330 @@
     fill.finish();
   }
 
+
+  /* ---------- particles, shake and run transitions ---------- */
+
+  var MAX_PARTICLES = 400;
+  var particles = [];
+  var particleCount = 0;
+
+  var feel = {
+    shakeAmp: 0,
+    shakeTime: 0,
+    shakeTotal: 0,
+    flare: 0,
+    gutter: 1,
+    pulseAt: -1,
+    portalFlare: 0
+  };
+  rd.feel = feel;
+
+  function shardTexture() {
+    var s = 64;
+    var cv = makeCanvas(s);
+    var g = cv.getContext('2d');
+    g.fillStyle = 'rgba(255,255,255,1)';
+    g.beginPath();
+    g.moveTo(32, 4);
+    g.lineTo(52, 32);
+    g.lineTo(32, 60);
+    g.lineTo(12, 32);
+    g.closePath();
+    g.fill();
+    return new THREE.CanvasTexture(cv);
+  }
+
+  function buildParticles() {
+    for (var i = 0; i < MAX_PARTICLES; i++) {
+      particles.push({
+        active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
+        life: 0, ttl: 1, size: 0.1, color: 0xffffff, spin: 0, rot: 0, drag: 1
+      });
+    }
+    dyn.particles = makeInstanced(
+      new THREE.PlaneGeometry(1, 1),
+      additiveMaterial(rd.tex.shard, 0xffffff),
+      MAX_PARTICLES,
+      8
+    );
+  }
+
+  function spawnParticle() {
+    if (particleCount >= MAX_PARTICLES) return null;
+    for (var i = 0; i < MAX_PARTICLES; i++) {
+      if (!particles[i].active) {
+        particles[i].active = true;
+        particleCount++;
+        return particles[i];
+      }
+    }
+    return null;
+  }
+
+  /* A burst of shards, used for deaths and celebrations. */
+  rd.burst = function (x, z, color, count, opts) {
+    var o = opts || {};
+    var speed = o.speed || 2.2;
+    var size = o.size || 0.16;
+    var ttl = o.ttl || 0.55;
+    for (var i = 0; i < count; i++) {
+      var p = spawnParticle();
+      if (!p) return;
+      var a = (i / count) * Math.PI * 2 + Math.random() * 0.7;
+      var sp = speed * (0.45 + Math.random() * 0.75);
+      p.x = x;
+      p.y = (o.y === undefined ? 0.3 : o.y);
+      p.z = z;
+      p.vx = Math.cos(a) * sp;
+      p.vz = Math.sin(a) * sp;
+      p.vy = (o.up || 1.6) * (0.3 + Math.random());
+      p.life = 0;
+      p.ttl = ttl * (0.7 + Math.random() * 0.6);
+      p.size = size * (0.6 + Math.random() * 0.8);
+      p.color = color;
+      p.spin = (Math.random() - 0.5) * 12;
+      p.rot = Math.random() * 6.28;
+      p.drag = o.drag || 2.2;
+    }
+  };
+
+  /* A couple of sparks where the light is biting into something. */
+  rd.spark = function (x, z, color) {
+    var p = spawnParticle();
+    if (!p) return;
+    p.x = x + (Math.random() - 0.5) * 0.3;
+    p.y = 0.22 + Math.random() * 0.2;
+    p.z = z + (Math.random() - 0.5) * 0.3;
+    p.vx = (Math.random() - 0.5) * 1.4;
+    p.vz = (Math.random() - 0.5) * 1.4;
+    p.vy = 1.1 + Math.random();
+    p.life = 0;
+    p.ttl = 0.26;
+    p.size = 0.075;
+    p.color = color;
+    p.spin = 8;
+    p.rot = Math.random() * 6.28;
+    p.drag = 3.5;
+  };
+
+  rd.clearParticles = function () {
+    for (var i = 0; i < particles.length; i++) particles[i].active = false;
+    particleCount = 0;
+    feel.shakeAmp = 0;
+    feel.shakeTime = 0;
+    feel.flare = 0;
+    feel.gutter = 1;
+    feel.pulseAt = -1;
+    feel.portalFlare = 0;
+  };
+
+  function stepParticles(dt) {
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      if (!p.active) continue;
+      p.life += dt;
+      if (p.life >= p.ttl) {
+        p.active = false;
+        particleCount--;
+        continue;
+      }
+      var k = Math.max(0, 1 - p.drag * dt);
+      p.vx *= k;
+      p.vz *= k;
+      p.vy -= 6.5 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      if (p.y < 0.05) {
+        p.y = 0.05;
+        p.vy = 0;
+        p.vx *= 0.6;
+        p.vz *= 0.6;
+      }
+      p.rot += p.spin * dt;
+    }
+  }
+
+  function drawParticles() {
+    var f = new Filler(dyn.particles);
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      if (!p.active) continue;
+      var t = p.life / p.ttl;
+      var fade = 1 - t * t;
+      var s = p.size * (1 - 0.45 * t);
+      f.pushBillboardRot(p.x, p.y, p.z, s, s, p.rot, R.util.mixColor(0x000000, p.color, fade));
+    }
+    f.finish();
+  }
+
+  Filler.prototype.pushBillboardRot = function (x, y, z, sx, sy, rotZ, colorHex) {
+    var mesh = this.mesh;
+    if (this.n >= mesh.instanceMatrix.count) return;
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(billboardX, 0, rotZ);
+    dummy.scale.set(sx, sy, 1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(this.n, dummy.matrix);
+    mesh.setColorAt(this.n, scratchColor.setHex(colorHex));
+    this.n++;
+  };
+
+  /* ---------- screen shake ---------- */
+
+  rd.shake = function (amount, seconds) {
+    /* Never shake the board out from under a finger that is placing a piece. */
+    if (R.state && R.state.ui.drag) return;
+    if (amount <= feel.shakeAmp && feel.shakeTime > 0) return;
+    feel.shakeAmp = amount;
+    feel.shakeTime = seconds;
+    feel.shakeTotal = seconds;
+  };
+
+  var shakeSeed = 1;
+
+  function applyShake(dtReal) {
+    var boardEl = document.getElementById('board');
+    if (!boardEl) return;
+    if (feel.shakeTime <= 0) {
+      if (boardEl.style.transform !== '') boardEl.style.transform = '';
+      return;
+    }
+    feel.shakeTime -= dtReal;
+    var k = Math.max(0, feel.shakeTime / feel.shakeTotal);
+    var amp = feel.shakeAmp * k * k;
+    shakeSeed = (shakeSeed * 1103515245 + 12345) & 0x7fffffff;
+    var a = (shakeSeed / 0x7fffffff) * 6.283;
+    boardEl.style.transform = 'translate(' + (Math.cos(a) * amp).toFixed(1) + 'px,' +
+      (Math.sin(a) * amp).toFixed(1) + 'px)';
+  }
+
+  /* ---------- the pulse that runs along the beam after a core upgrade ---------- */
+
+  var PULSE_SPEED = 26;
+
+  function drawPulse(state, now) {
+    if (feel.pulseAt < 0) return;
+    var dist = (now - feel.pulseAt) * PULSE_SPEED;
+    var segs = state.beam.segments;
+    var f = new Filler(dyn.pulse);
+    var found = false;
+    for (var i = 0; i < state.beam.segCount; i++) {
+      var s = segs[i];
+      var len = Math.abs(s.x1 - s.x0) + Math.abs(s.z1 - s.z0);
+      var d = dist - s.dist0;
+      if (d < 0 || d > len) continue;
+      found = true;
+      var fx = len === 0 ? 0 : (s.x1 - s.x0) / len;
+      var fz = len === 0 ? 0 : (s.z1 - s.z0) / len;
+      f.push(s.x0 + fx * d, BEAM_Y + 0.02, s.z0 + fz * d, 0, 1.1, 1.1, 0x8a6a2a);
+    }
+    f.finish();
+    if (!found && dist > 4) feel.pulseAt = -1;
+  }
+
+
+  /* ---------- reacting to simulation events ---------- */
+
+  var realClock = 0;
+  var flipTimes = {};
+  var ghostPieces = [];
+
+  rd.clock = function () {
+    return realClock;
+  };
+
+  rd.particleCount = function () {
+    return particleCount;
+  };
+
+  rd.ghostCount = function () {
+    return ghostPieces.length;
+  };
+
+  rd.handleEvents = function (state) {
+    for (var i = 0; i < state.events.length; i++) {
+      var e = state.events[i];
+      switch (e.type) {
+        case 'kill':
+          var col = C.enemyGlint[e.enemy] || 0xffffff;
+          if (e.boss) {
+            rd.burst(e.x, e.z, col, 18, { speed: 3.6, size: 0.24, ttl: 0.9, up: 2.6 });
+            rd.burst(e.x, e.z, 0xffffff, 10, { speed: 2.2, size: 0.16, ttl: 0.7 });
+            rd.shake(9, 0.32);
+            rd.hitStop = 0.06;
+          } else if (e.enemy === 'brute') {
+            rd.burst(e.x, e.z, col, 10, { speed: 2.6, size: 0.19, ttl: 0.65 });
+            rd.shake(4, 0.13);
+          } else {
+            rd.burst(e.x, e.z, col, e.enemy === 'swarmling' ? 4 : 7, { speed: 2.1, size: 0.13 });
+          }
+          break;
+        case 'leak':
+          rd.shake(e.leak >= 3 ? 7 : 4, 0.2);
+          rd.burst(e.x, e.z, 0xff5d6c, 8, { speed: 1.7, size: 0.15, ttl: 0.5 });
+          break;
+        case 'upgrade':
+          feel.pulseAt = realClock;
+          break;
+        case 'wavestart':
+          feel.portalFlare = 1;
+          break;
+        case 'flip':
+          flipTimes[e.id] = { at: realClock, dir: e.toOrient ? 1 : -1 };
+          break;
+        case 'sell':
+        case 'undo':
+          if (e.record) {
+            ghostPieces.push({
+              type: e.record.type, c: e.record.c, r: e.record.r,
+              orient: e.record.orient, dir: e.record.dir, at: realClock
+            });
+          }
+          break;
+        case 'win':
+          feel.flare = 1.3;
+          for (var k = 0; k < 8; k++) {
+            rd.burst(
+              (Math.random() - 0.5) * 7,
+              (Math.random() - 0.5) * 10,
+              [0xffc247, 0x59e8ff, 0xffffff, 0x7ce0a8][k % 4],
+              12, { speed: 3, size: 0.2, ttl: 1.4, up: 3 }
+            );
+          }
+          break;
+        case 'lose':
+          rd.shake(10, 0.5);
+          break;
+        default:
+          break;
+      }
+    }
+  };
+
+  function stepFeel(state, dt) {
+    if (state.phase === 'lost') feel.gutter = Math.max(0, feel.gutter - dt * 1.1);
+    else feel.gutter = Math.min(1, feel.gutter + dt * 4);
+    feel.flare = Math.max(0, feel.flare - dt * 0.9);
+    for (var i = ghostPieces.length - 1; i >= 0; i--) {
+      if (realClock - ghostPieces[i].at > 0.24) ghostPieces.splice(i, 1);
+    }
+  }
+
+  /* Sparks where the light is biting, roughly ten a second per enemy. */
+  function sparkEnemies(state, dt) {
+    if (dt <= 0) return;
+    var chance = dt / 0.1;
+    var list = state.enemies;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (state.time - e.hitAt > 0.06 || e.t < 0) continue;
+      if (Math.random() < chance) {
+        rd.spark(e.x, e.z, C.enemyGlint[e.type] || 0xffffff);
+      }
+    }
+  }
+
   /* ---------- selection and drag highlights ---------- */
 
   function frameTexture() {
@@ -971,13 +1326,21 @@
   }
 
   rd.drawDynamic = function (state, dtReal) {
-    advanceSweep(state, dtReal || 0);
+    var dt = dtReal || 0;
+    realClock += dt;
+    stepFeel(state, dt);
+    advanceSweep(state, dt);
+    sparkEnemies(state, dt);
+    stepParticles(dt);
     drawLitTiles(state);
     drawBeams(state);
     drawPreview(state);
     drawPieces(state);
     drawEnemies(state);
+    drawParticles();
+    drawPulse(state, realClock);
     drawHighlights(state);
+    applyShake(dt);
   };
 
   /* ---------- frame ---------- */
@@ -997,6 +1360,10 @@
     }
     if (rd.portalRing) {
       rd.portalRing.rotation.z -= dtReal * 0.5;
+      if (feel.portalFlare > 0) feel.portalFlare = Math.max(0, feel.portalFlare - dtReal * 1.6);
+      var ps = 1 + feel.portalFlare * 0.8;
+      rd.portalRing.scale.set(ps, ps, 1);
+      rd.portalRing.material.color.setHex(R.util.mixColor(0x9b4dff, 0xffffff, feel.portalFlare));
     }
 
     rd.drawDynamic(state, dtReal);

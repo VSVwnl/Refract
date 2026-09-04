@@ -109,7 +109,11 @@
     return Math.round(s.goldEarned + 50 * s.wavesCleared + 10 * Math.max(0, s.coreHp));
   };
 
-  /* Feedback events are drained by the renderer and the audio system. */
+  /*
+   * Feedback events are drained by the renderer, the HUD and the audio system.
+   * `type` names the event, so payloads use `enemy` and `piece` for the kind of
+   * thing involved and never carry a `type` key of their own.
+   */
   R.emit = function (s, type, data) {
     if (s.events.length < 256) {
       var e = data || {};

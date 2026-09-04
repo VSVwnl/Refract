@@ -1518,4 +1518,273 @@ module.exports = function (S) {
     await step(0.1);
   };
 
+  /* Phase 8: every row of the feedback table in specification section 23. */
+  S.feel = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const frames = function (n) {
+      return st(function (k) {
+        return new Promise(function (resolve) {
+          let i = 0;
+          function tick() { if (++i >= k) resolve(true); else requestAnimationFrame(tick); }
+          requestAnimationFrame(tick);
+        });
+      }, n || 3);
+    };
+
+    await st(function () {
+      window.__REFRACT.restart(4000);
+      window.__REFRACT.setGold(4000);
+      R.state.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+    });
+
+    /* --- placement pop --- */
+    await ctx.tapCell(7, 3);
+    const pop = await st(function () {
+      const p = R.pieces.at(R.state, 7, 3);
+      return { age: Math.round((R.state.time - p.placedAt) * 1000) / 1000, placed: !!p };
+    });
+    ctx.check(pop.placed && pop.age < 0.25, 'a placed piece is inside its pop window');
+
+    /* --- flip rotation --- */
+    await st(function () { R.pieces.flip(R.state, 7, 3); });
+    await frames(1);
+    const flipping = await st(function () { return R.render.clock(); });
+    ctx.check(flipping > 0, 'the render clock runs for the flip animation');
+    await st(function () { R.pieces.flip(R.state, 7, 3); });
+
+    /* --- enemy death makes shards --- */
+    await st(function () {
+      R.render.clearParticles();
+      const s = R.state;
+      s.countdown = 9999;
+      const e = R.enemies.spawn(s, 'mote');
+      e.t = 5;
+      R.enemies.positionOf(s, e);
+      e.hp = 0;
+      R.enemies.resolveStep(s);
+      R.render.handleEvents(s);
+    });
+    const shards = await st(function () { return R.render.particleCount(); });
+    ctx.check(shards >= 5, 'a death throws a shard burst (' + shards + ' particles)');
+    await frames(2);
+    await ctx.snap('a-death-burst');
+
+    /* --- brute death shakes, boss death shakes harder and stops time --- */
+    const bruteShake = await st(function () {
+      R.render.clearParticles();
+      const s = R.state;
+      const e = R.enemies.spawn(s, 'brute');
+      e.t = 6;
+      R.enemies.positionOf(s, e);
+      e.hp = 0;
+      R.enemies.resolveStep(s);
+      R.render.handleEvents(s);
+      return { amp: R.render.feel.shakeAmp, parts: R.render.particleCount() };
+    });
+    ctx.check(bruteShake.amp >= 4, 'a brute death shakes the board (' + bruteShake.amp + 'px)');
+
+    const bossShake = await st(function () {
+      R.render.clearParticles();
+      R.render.hitStop = 0;
+      const s = R.state;
+      const e = R.enemies.spawn(s, 'bruteking');
+      e.t = 7;
+      R.enemies.positionOf(s, e);
+      e.hp = 0;
+      R.enemies.resolveStep(s);
+      R.render.handleEvents(s);
+      return { amp: R.render.feel.shakeAmp, hitStop: R.render.hitStop, parts: R.render.particleCount() };
+    });
+    ctx.log('  boss death: ' + JSON.stringify(bossShake));
+    ctx.check(bossShake.amp > bruteShake.amp, 'a boss death shakes harder');
+    ctx.check(bossShake.hitStop > 0, 'a boss death stops time for a beat');
+    ctx.check(bossShake.parts >= 20, 'a boss death throws a bigger burst');
+
+    /* the board actually moves while shaking */
+    await frames(1);
+    const moved = await st(function () {
+      return document.getElementById('board').style.transform;
+    });
+    ctx.check(moved.indexOf('translate') === 0, 'the board is offset while shaking (' + moved + ')');
+    await ctx.snap('b-boss-death');
+
+    /* --- shake is suppressed during a drag --- */
+    const noShake = await st(function () {
+      const s = R.state;
+      R.render.feel.shakeAmp = 0;
+      R.render.feel.shakeTime = 0;
+      s.ui.drag = { kind: 'palette', type: 'mirror', dragging: true, cell: null, valid: false, x: 0, y: 0 };
+      R.render.shake(9, 0.3);
+      const amp = R.render.feel.shakeAmp;
+      s.ui.drag = null;
+      return amp;
+    });
+    ctx.eq(noShake, 0, 'no screen shake while a piece is being dragged');
+
+    /* --- leak flashes the vignette --- */
+    const leak = await st(function () {
+      const s = R.state;
+      const e = R.enemies.spawn(s, 'brute');
+      e.t = 25.5;
+      R.enemies.positionOf(s, e);
+      R.enemies.resolveStep(s);
+      R.render.handleEvents(s);
+      R.ui.frame(s, 0.016);
+      return {
+        opacity: document.getElementById('vignette').style.opacity,
+        hp: s.coreHp
+      };
+    });
+    ctx.log('  leak: ' + JSON.stringify(leak));
+    ctx.check(Number(leak.opacity) > 0, 'a leak flashes the red vignette');
+    await ctx.snap('c-leak-vignette');
+
+    /* --- wave banners --- */
+    await st(function () {
+      window.__REFRACT.restart(4001);
+      window.__REFRACT.nextWave();
+      R.render.handleEvents(R.state);
+      R.ui.frame(R.state, 0.016);
+    });
+    await frames(2);
+    const banner = await st(function () {
+      const b = document.querySelector('#boardOverlay .banner');
+      const board = document.getElementById('board').getBoundingClientRect();
+      const r = b.getBoundingClientRect();
+      const hud = document.getElementById('hud').getBoundingClientRect();
+      return {
+        text: b.textContent,
+        shown: b.style.display !== 'none',
+        insideBoard: r.top >= board.top - 1 && r.bottom <= board.bottom + 1,
+        clearsHud: r.top >= hud.bottom
+      };
+    });
+    ctx.log('  banner: ' + JSON.stringify(banner));
+    ctx.check(banner.shown && banner.text.indexOf('WAVE 1') >= 0, 'a wave banner appears');
+    ctx.check(banner.insideBoard, 'the banner stays inside the board area');
+    ctx.check(banner.clearsHud, 'the banner never covers the HUD numbers');
+    await ctx.snap('d-wave-banner');
+
+    const portal = await st(function () {
+      window.__REFRACT.restart(4005);
+      window.__REFRACT.nextWave();
+      R.render.handleEvents(R.state);
+      return R.render.feel.portalFlare;
+    });
+    ctx.check(portal > 0, 'the spawn portal flares when a wave starts');
+
+    /* --- core upgrade pulse --- */
+    const pulse = await st(function () {
+      const s = R.state;
+      s.gold = 999;
+      R.pieces.upgradeCore(s);
+      R.render.handleEvents(s);
+      return R.render.feel.pulseAt;
+    });
+    ctx.check(pulse >= 0, 'a core upgrade starts a pulse along the beam');
+    await frames(3);
+    await ctx.snap('e-core-pulse');
+
+    /* --- selling plays the piece out --- */
+    const ghost = await st(function () {
+      const s = R.state;
+      s.gold = 999;
+      R.pieces.place(s, 'mirror', 5, 8);
+      R.pieces.sell(s, 5, 8);
+      R.render.handleEvents(s);
+      return R.render.ghostCount();
+    });
+    ctx.eq(ghost, 1, 'a sold piece shrinks out');
+
+    /* --- gold floaters arc to the counter --- */
+    const arc = await st(function () {
+      const s = R.state;
+      R.ui.clearFloaters();
+      const e = R.enemies.spawn(s, 'mote');
+      e.t = 5;
+      R.enemies.positionOf(s, e);
+      e.hp = 0;
+      R.enemies.resolveStep(s);
+      R.ui.frame(s, 0.016);
+      const f = Array.prototype.filter.call(
+        document.querySelectorAll('#boardOverlay .floater'),
+        function (n) { return n.style.display !== 'none'; }
+      );
+      return f.map(function (n) { return n.textContent; });
+    });
+    ctx.check(arc.some(function (t) { return t.indexOf('+') === 0; }), 'a kill floats gold: ' + JSON.stringify(arc));
+
+    /* --- victory flare and confetti --- */
+    await st(function () {
+      window.__REFRACT.restart(4002);
+      R.render.clearParticles();
+      window.__REFRACT.forceWin();
+      R.render.handleEvents(R.state);
+    });
+    const win = await st(function () {
+      return { flare: R.render.feel.flare, parts: R.render.particleCount() };
+    });
+    ctx.log('  victory: ' + JSON.stringify(win));
+    ctx.check(win.flare > 0.5, 'the beams flare on victory');
+    ctx.check(win.parts >= 40, 'victory throws confetti (' + win.parts + ' particles)');
+    await frames(3);
+    await ctx.snap('f-victory-flare');
+
+    /* --- defeat gutters the beam out --- */
+    await st(function () {
+      window.__REFRACT.restart(4003);
+      window.__REFRACT.forceLose();
+      R.render.handleEvents(R.state);
+    });
+    const g0 = await st(function () { return R.render.feel.gutter; });
+    await frames(12);
+    const g1 = await st(function () { return R.render.feel.gutter; });
+    ctx.check(g1 < g0, 'the beam gutters out on defeat (' + g0 + ' to ' + g1 + ')');
+    await ctx.snap('g-defeat-gutter');
+
+    /* --- restart clears every effect --- */
+    await st(function () { R.restartRun(4004); });
+    const clean = await st(function () {
+      return {
+        parts: R.render.particleCount(),
+        ghosts: R.render.ghostCount(),
+        gutter: R.render.feel.gutter,
+        flare: R.render.feel.flare,
+        vignette: document.getElementById('vignette').style.opacity,
+        banner: document.querySelector('#boardOverlay .banner').style.display
+      };
+    });
+    ctx.log('  after restart: ' + JSON.stringify(clean));
+    ctx.eq(clean.parts, 0, 'no particles survive a restart');
+    ctx.eq(clean.ghosts, 0, 'no piece ghosts survive a restart');
+    ctx.eq(clean.flare, 0, 'no flare survives a restart');
+    ctx.eq(clean.banner, 'none', 'no banner survives a restart');
+
+    /* --- particle budget at peak --- */
+    const peak = await st(function () {
+      const s = R.state;
+      s.gold = 9000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      window.__REFRACT.place('mirror', 7, 3, 1);
+      window.__REFRACT.place('mirror', 0, 3, 0);
+      window.__REFRACT.place('mirror', 0, 10, 1);
+      for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+      s.wave = 10;
+      R.startWave(s);
+      let worst = 0;
+      for (let i = 0; i < 3000; i++) {
+        R.simStep(s, 1 / 60);
+        R.render.handleEvents(s);
+        s.events.length = 0;
+        if (R.render.particleCount() > worst) worst = R.render.particleCount();
+        if (s.phase !== 'wave') break;
+      }
+      return { worst: worst, wave: s.wave, phase: s.phase };
+    });
+    ctx.log('  peak particles during wave 11: ' + JSON.stringify(peak));
+    ctx.check(peak.worst <= 400, 'particles stay within the 400 budget (' + peak.worst + ')');
+    const calls = await st(function () { return R.render.info().calls; });
+    ctx.check(calls <= 150, 'draw calls in budget: ' + calls);
+  };
+
 };

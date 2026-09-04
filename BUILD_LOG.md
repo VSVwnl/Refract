@@ -465,3 +465,55 @@ Screenshots reviewed: `shots/mobile-<size>-01-title.png` through `-06-safearea.p
 **Result:** 26 Node tests and 270 browser checks across eleven scenarios pass. The game is fully playable by touch at every target size.
 
 **Next step:** Phase 8 — game feel: particles, floaters, shakes, banners and transitions.
+
+
+### Session 1 — 2026-09-04 — Phase 8: game feel
+
+**Goal:** Every row of the feedback table in specification section 23 has its effect.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 8.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile-emulation tests.
+
+**Work completed:**
+
+- Particle system: 400 pooled records drawn through one additive instanced mesh with a procedurally drawn shard texture. Particles have velocity, drag, gravity, spin and a fade, live entirely in the renderer on real time, and never touch the simulation.
+- Shard bursts on every death, sized and coloured by enemy type: 4 for a swarmling, 7 for a mote or runner, 10 plus a 4 px shake for a brute, 18 plus a white overlay burst, a 9 px shake and 60 ms of hit-stop for a boss.
+- Sparks where the light is biting, about ten a second per burning enemy.
+- Screen shake applied as a transform on the board element, so the canvas and everything drawn over it move together and cell picking stays correct. Amplitude decays quadratically. **Shake is suppressed entirely while a piece is being dragged.**
+- Leak feedback: a red vignette over the whole column that flashes by leak size and fades, plus the existing HP shake and floater, plus a small burst at the core.
+- Wave banners that slide in, hold and rise away, inside the board area so they never cover the HUD.
+- Gold from a kill now arcs from the enemy to the gold counter instead of drifting upward.
+- Core upgrade sends a bright pulse travelling along the beam at 26 cells per second.
+- The spawn portal flares when a wave starts.
+- Flip animates as a 120 ms snap rotation; a sold or undone piece shrinks out over 240 ms; a moved piece stays translucent while it re-forms.
+- Victory flares every beam white and throws about 190 confetti shards; defeat gutters the beam out over roughly a second and shakes once.
+- Restart clears particles, ghosts, banners, vignette, shake and the flare/gutter state.
+
+**Browser testing:** `node tools/qa.js feel` at 390x844, 26 checks passing, plus the whole twelve-scenario suite.
+
+Measurements: a mote death produces 7 particles; a brute death shakes at 4 px; a boss death shakes at 9 px, stops time for 60 ms and produces 28 particles, and the board element carries a real `translate(...)`; a 3 HP leak drives the vignette to 0.62 opacity; the wave banner reads "WAVE 1", sits inside the board and clears the HUD; a core upgrade starts a beam pulse; a sold piece leaves exactly one shrinking ghost; a kill floats "+4" towards the counter; victory reaches flare 1.27 with 192 particles; defeat drops the beam multiplier from 0.96 to 0.47 over twelve frames; after a restart every effect counter is zero. **Peak particle count over the whole of wave 11 was 212, inside the 400 budget**, with 33 draw calls.
+
+Screenshots `shots/feel-390x844-a-death-burst.png` through `-g-defeat-gutter.png` reviewed.
+
+**Problems found:**
+
+1. **A real bug with wide reach: `R.emit` overwrote the payload's `type` field with the event name.** Every event that carried an enemy type or a piece type — kill, leak, spawn, unlock, place, flip, move, sell, denied — was reporting `type: "kill"` and so on. The visible symptoms were that brute and boss deaths never shook the screen, unlock notices would have read "UNLOCK UNLOCKED", and the brute and swarm hints could never fire. It went unnoticed because until this phase nothing had read those fields.
+2. The red vignette never appeared: the UI stepped its fade before handling events, so an effect started in a frame was not drawn until the next one.
+3. Two flaky assertions that read a decaying effect after a screenshot had already consumed the time.
+4. A dead `occDirty` variable left in the enemy module.
+
+**Fixes:**
+
+1. Event payloads now use `enemy` for an enemy type and `piece` for a piece type, and never a `type` key; the comment on `R.emit` says so. All readers updated.
+2. `ui.frame` handles events first, then steps floaters, banners and the vignette, so an effect started this frame is drawn this frame.
+3. Assertions moved to immediately after the trigger.
+4. Removed.
+
+**Decisions locked:** No changes to Part 1. Added: feedback event payloads never carry a `type` key.
+
+**Balance changes:** none.
+
+**Result:** 26 Node tests and 296 browser checks across twelve scenarios pass. Every row of section 23 has its feedback except sound, which is Phase 9.
+
+**Next step:** Phase 9 — synthesized audio.

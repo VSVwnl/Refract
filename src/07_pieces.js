@@ -55,7 +55,7 @@
   R.pieces.place = function (s, type, c, r, orient) {
     var problem = R.pieces.placementProblem(s, type, c, r);
     if (problem) {
-      R.emit(s, 'denied', { reason: problem, c: c, r: r, type: type, cost: R.pieces.cost(s, type) });
+      R.emit(s, 'denied', { reason: problem, c: c, r: r, piece: type, cost: R.pieces.cost(s, type) });
       return null;
     }
 
@@ -82,7 +82,7 @@
     s.ui.undo = { pieceId: piece.id, until: s.time + B.UNDO_WINDOW, refund: cost };
 
     R.beam.recompute(s);
-    R.emit(s, 'place', { id: piece.id, type: type, c: c, r: r, cost: cost });
+    R.emit(s, 'place', { id: piece.id, piece: type, c: c, r: r, cost: cost });
     return piece;
   };
 
@@ -97,7 +97,7 @@
     if (p.type === 'lamp') p.dir = (p.dir + 1) % 4;
     else p.orient = p.orient ? 0 : 1;
     R.beam.recompute(s);
-    R.emit(s, 'flip', { id: p.id, type: p.type, c: c, r: r });
+    R.emit(s, 'flip', { id: p.id, piece: p.type, c: c, r: r, toOrient: p.orient });
     return true;
   };
 
@@ -134,10 +134,16 @@
     var u = R.pieces.undoLive(s);
     if (!u) return false;
     var p = R.pieces.byId(s, u.pieceId);
+    var record = snapshotOf(p);
     removePiece(s, p, u.refund);
-    R.emit(s, 'undo', { refund: u.refund, c: p.c, r: p.r });
+    R.emit(s, 'undo', { refund: u.refund, c: p.c, r: p.r, piece: record.type, record: record });
     return true;
   };
+
+  /* A plain copy so the renderer can play the piece out after it is gone. */
+  function snapshotOf(p) {
+    return { type: p.type, c: p.c, r: p.r, orient: p.orient, dir: p.dir };
+  }
 
   /* ---------- selling ---------- */
 
@@ -164,8 +170,9 @@
     var p = R.pieces.at(s, c, r);
     if (!p) return false;
     var refund = R.pieces.refundFor(s, p);
+    var record = snapshotOf(p);
     removePiece(s, p, refund);
-    R.emit(s, 'sell', { refund: refund, c: c, r: r, type: p.type });
+    R.emit(s, 'sell', { refund: refund, c: c, r: r, piece: record.type, record: record });
     return true;
   };
 
@@ -179,7 +186,7 @@
       return true;
     }
     if (!R.grid.isBuildable(s, toC, toR)) {
-      R.emit(s, 'denied', { reason: 'terrain', c: toC, r: toR, type: p.type });
+      R.emit(s, 'denied', { reason: 'terrain', c: toC, r: toR, piece: p.type });
       return false;
     }
     s.pieces.delete(p.i);
@@ -191,7 +198,7 @@
     s.pieces.set(p.i, p);
     s.ui.moveMode = false;
     R.beam.recompute(s);
-    R.emit(s, 'move', { id: p.id, type: p.type, c: toC, r: toR });
+    R.emit(s, 'move', { id: p.id, piece: p.type, c: toC, r: toR });
     return true;
   };
 

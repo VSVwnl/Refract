@@ -53,6 +53,8 @@
     f.x = x;
     f.y = y;
     f.vy = (opts && opts.vy) || -46;
+    f.tx = opts && opts.tx !== undefined ? opts.tx : null;
+    f.ty = opts && opts.ty !== undefined ? opts.ty : null;
     f.node.className = 'floater ' + (kind || 'info');
     f.node.textContent = text;
     f.node.style.display = 'block';
@@ -74,6 +76,13 @@
     return ui.floater(text, kind, p.x, p.y, opts);
   };
 
+  /* Board-overlay coordinates of the gold counter, for arcing rewards. */
+  function goldTarget() {
+    var board = document.getElementById('board').getBoundingClientRect();
+    var g = el.statGold.getBoundingClientRect();
+    return { tx: g.left + g.width / 2 - board.left, ty: g.top + g.height / 2 - board.top };
+  }
+
   function stepFloaters(dt) {
     for (var i = 0; i < floaters.length; i++) {
       var f = floaters[i];
@@ -85,8 +94,16 @@
         continue;
       }
       var t = f.life / f.ttl;
-      f.node.style.top = (f.y + f.vy * t) + 'px';
-      f.node.style.opacity = String(1 - t * t);
+      if (f.tx !== null) {
+        /* Arc towards the gold counter so the reward reads as banked. */
+        var e = R.util.easeInCubic(t);
+        f.node.style.left = (f.x + (f.tx - f.x) * e) + 'px';
+        f.node.style.top = (f.y + (f.ty - f.y) * e - Math.sin(t * Math.PI) * 26) + 'px';
+        f.node.style.opacity = String(t < 0.75 ? 1 : (1 - t) * 4);
+      } else {
+        f.node.style.top = (f.y + f.vy * t) + 'px';
+        f.node.style.opacity = String(1 - t * t);
+      }
     }
   }
 
@@ -201,38 +218,43 @@
           /* Stagger simultaneous kills so the numbers stay readable. */
           if (realTime - goldFloaterAt > 0.04) {
             goldFloaterAt = realTime;
-            ui.floaterAtWorld('+' + e.gold, 'gold', e.x, e.z);
+            var target = goldTarget();
+            target.ttl = 0.8;
+            ui.floaterAtWorld('+' + e.gold, 'gold', e.x, e.z, target);
           }
           ui.bumpGold();
           break;
         case 'leak':
           ui.shakeHp();
+          ui.flashVignette(0.35 + 0.1 * e.leak);
           ui.floaterAtWorld('-' + e.leak, 'dmg', e.x, e.z, { ttl: 1.1 });
           break;
         case 'waveclear':
           ui.notice('WAVE ' + e.wave + ' CLEARED  +' + e.bonus, 2.2);
+          ui.banner('CLEARED', '+' + e.bonus + ' gold', 1.7);
           ui.bumpGold();
           if (e.wave === 1) ui.hint(s, 'along', 6);
           if (e.wave === 3) ui.hint(s, 'core', 6);
           break;
         case 'wavestart':
           ui.notice('WAVE ' + e.wave, 1.4);
+          ui.banner(s.endless ? 'ENDLESS ' + e.wave : 'WAVE ' + e.wave, null, 1.5);
           break;
         case 'runstart':
           lastLit = 0;
           ui.hint(s, 'start', 7);
           break;
         case 'spawn':
-          if (e.type === 'brute' || e.type === 'bruteking') ui.hint(s, 'brute', 6);
-          if (e.type === 'swarmling') ui.hint(s, 'swarm', 6);
+          if (e.enemy === 'brute' || e.enemy === 'bruteking') ui.hint(s, 'brute', 6);
+          if (e.enemy === 'swarmling') ui.hint(s, 'swarm', 6);
           break;
         case 'endless':
           ui.notice('ENDLESS MODE', 2.4);
           break;
         case 'unlock':
-          ui.notice(String(TYPE_LABEL_PIECE[e.type] || e.type).toUpperCase() + ' UNLOCKED', 3);
-          ui.flashPalette(e.type);
-          ui.hint(s, e.type, 6);
+          ui.notice(String(TYPE_LABEL_PIECE[e.piece] || e.piece).toUpperCase() + ' UNLOCKED', 3);
+          ui.flashPalette(e.piece);
+          ui.hint(s, e.piece, 6);
           break;
         case 'undo':
           ui.bumpGold();
@@ -705,6 +727,89 @@
     if (s.phase === 'paused') R.resume();
   };
 
+
+  /* ---------- damage vignette ---------- */
+
+  var vignette = null;
+  var vignetteLevel = 0;
+
+  function buildVignette() {
+    vignette = node('div', null);
+    vignette.id = 'vignette';
+    document.getElementById('app').appendChild(vignette);
+  }
+
+  ui.flashVignette = function (strength) {
+    vignetteLevel = Math.min(1, vignetteLevel + strength);
+  };
+
+  function stepVignette(dt) {
+    if (vignetteLevel <= 0) {
+      if (cache.vig !== 0) {
+        cache.vig = 0;
+        vignette.style.opacity = '0';
+      }
+      return;
+    }
+    vignetteLevel = Math.max(0, vignetteLevel - dt * 1.8);
+    var v = Math.round(vignetteLevel * 100) / 100;
+    if (cache.vig !== v) {
+      cache.vig = v;
+      vignette.style.opacity = String(v);
+    }
+  }
+
+  /* ---------- wave banners ---------- */
+
+  var banners = [];
+
+  function buildBanners() {
+    for (var i = 0; i < 2; i++) {
+      var b = node('div', 'banner' + (i ? ' sub' : ''));
+      b.style.display = 'none';
+      el.overlayHost.appendChild(b);
+      banners.push({ node: b, life: 0, ttl: 0 });
+    }
+  }
+
+  ui.banner = function (main, sub, seconds) {
+    var ttl = seconds || 1.6;
+    banners[0].node.textContent = main;
+    banners[0].life = 0;
+    banners[0].ttl = ttl;
+    banners[0].node.style.display = 'block';
+    banners[1].node.textContent = sub || '';
+    banners[1].life = 0;
+    banners[1].ttl = sub ? ttl : 0;
+    banners[1].node.style.display = sub ? 'block' : 'none';
+  };
+
+  function stepBanners(dt) {
+    for (var i = 0; i < banners.length; i++) {
+      var b = banners[i];
+      if (b.ttl <= 0) continue;
+      b.life += dt;
+      var t = b.life / b.ttl;
+      if (t >= 1) {
+        b.ttl = 0;
+        b.node.style.display = 'none';
+        continue;
+      }
+      /* Slide in, hold, then rise away. */
+      var slide = t < 0.18 ? (1 - R.util.easeOutCubic(t / 0.18)) * 40 : 0;
+      var out = t > 0.75 ? (t - 0.75) / 0.25 : 0;
+      b.node.style.transform = 'translate(-50%, ' + Math.round(-50 + slide - out * 30) + '%)';
+      b.node.style.opacity = String(t < 0.18 ? t / 0.18 : (1 - out));
+    }
+  }
+
+  ui.clearBanners = function () {
+    for (var i = 0; i < banners.length; i++) {
+      banners[i].ttl = 0;
+      banners[i].node.style.display = 'none';
+    }
+  };
+
   /* ---------- lifecycle ---------- */
 
   ui.init = function () {
@@ -737,6 +842,8 @@
     buildUndoChip();
     buildGhost();
     buildHint();
+    buildVignette();
+    buildBanners();
 
     for (var i = 0; i < FLOATER_POOL; i++) floaters.push(makeFloater());
     ui.el = el;
@@ -744,8 +851,11 @@
 
   ui.frame = function (s, dtReal) {
     realTime += dtReal;
-    stepFloaters(dtReal);
+    /* Events first, so an effect started this frame is drawn this frame. */
     ui.handleEvents(s);
+    stepFloaters(dtReal);
+    stepBanners(dtReal);
+    stepVignette(dtReal);
     ui.update(s);
     syncHudButtons(s);
     syncPalette(s);
@@ -763,6 +873,9 @@
     stripNotice = '';
     stripNoticeUntil = 0;
     lastLit = 0;
+    vignetteLevel = 0;
+    if (vignette) vignette.style.opacity = '0';
+    ui.clearBanners();
     hintKey = null;
     hintUntil = 0;
     if (hintNode) hintNode.style.display = 'none';

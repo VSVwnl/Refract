@@ -81,6 +81,7 @@
     R.beam.recompute(s);
     if (R.ui.reset) R.ui.reset();
     if (R.render.resetSweep) R.render.resetSweep();
+    if (R.render.clearParticles) R.render.clearParticles();
     if (R.input.cancel) R.input.cancel();
     accumulator = 0;
     return s;
@@ -136,7 +137,7 @@
     for (var type in table) {
       if (!s.unlocked[type] && upcomingWave >= table[type]) {
         s.unlocked[type] = true;
-        R.emit(s, 'unlock', { type: type });
+        R.emit(s, 'unlock', { piece: type });
       }
     }
   };
@@ -227,6 +228,12 @@
     if (!(dtReal > 0)) dtReal = 0;
     if (dtReal > T.MAX_FRAME_DT) dtReal = T.MAX_FRAME_DT;
 
+    /* A boss death freezes everything for a beat. */
+    if (R.render.hitStop > 0) {
+      R.render.hitStop -= dtReal;
+      dtReal = 0;
+    }
+
     if (R.isSimulating(s)) {
       accumulator += dtReal;
       var steps = 0;
@@ -240,6 +247,7 @@
       accumulator = 0;
     }
 
+    R.render.handleEvents(s);
     R.ui.frame(s, dtReal);
     R.render.draw(s, dtReal);
     if (R.debug) R.debug.frame(dtReal);

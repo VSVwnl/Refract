@@ -120,7 +120,7 @@
     e.spawnAt = s.time;
     positionOf(s, e);
     s.enemies.push(e);
-    R.emit(s, 'spawn', { type: type, id: e.id });
+    R.emit(s, 'spawn', { enemy: type, id: e.id });
     return e;
   };
 
@@ -162,7 +162,6 @@
   /* ---------- occupancy ---------- */
 
   var occ = new Array(CELLS);
-  var occDirty = true;
 
   en.occupancy = function (s) {
     for (var i = 0; i < CELLS; i++) occ[i] = null;
@@ -173,7 +172,6 @@
       if (!occ[e.cell]) occ[e.cell] = [];
       occ[e.cell].push(e);
     }
-    occDirty = false;
     return occ;
   };
 
@@ -210,7 +208,7 @@
         list.splice(i, 1);
         s.gold += e.gold;
         s.goldEarned += e.gold;
-        R.emit(s, 'kill', { type: e.type, gold: e.gold, x: e.x, z: e.z, boss: e.boss, id: e.id });
+        R.emit(s, 'kill', { enemy: e.type, gold: e.gold, x: e.x, z: e.z, boss: e.boss, id: e.id });
         pool.push(e);
         continue;
       }
@@ -218,7 +216,7 @@
         list.splice(i, 1);
         s.coreHp -= e.leak;
         s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;
-        R.emit(s, 'leak', { type: e.type, leak: e.leak, x: e.x, z: e.z, id: e.id });
+        R.emit(s, 'leak', { enemy: e.type, leak: e.leak, x: e.x, z: e.z, id: e.id });
         pool.push(e);
       }
     }
