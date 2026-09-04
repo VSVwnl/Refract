@@ -160,9 +160,13 @@ async function main() {
   const url = arg('url', 'http://localhost:8080/?debug=1');
   const dsf = Number(arg('dsf', 3));
 
+  const gpu = flag('gpu');
   const browser = await chromium.launch({
-    headless: !flag('headed'),
-    slowMo: Number(arg('slow', 0))
+    headless: !flag('headed') && !gpu,
+    slowMo: Number(arg('slow', 0)),
+    args: ['--enable-precise-memory-info'].concat(gpu
+      ? ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--use-angle=default']
+      : [])
   });
   const desktop = flag('desktop');
   const context = await browser.newContext(desktop ? {
@@ -195,6 +199,7 @@ async function main() {
 
   const ctx = new Ctx(page, log);
   ctx.cdp = await context.newCDPSession(page);
+  ctx.gpu = gpu;
   ctx.prefix = name + '-' + width + 'x' + height + (desktop ? '-desktop' : '');
   ctx.width = width;
   ctx.height = height;

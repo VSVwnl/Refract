@@ -218,6 +218,27 @@
 
   /* ---------- main loop ---------- */
 
+  /*
+   * Turn a variable frame time into whole fixed steps. Keeping this separate
+   * from the frame callback means the pacing can be driven with any refresh
+   * rate in a test and behave exactly as it does in the browser.
+   */
+  R.advance = function (s, dtReal) {
+    if (!R.isSimulating(s)) {
+      accumulator = 0;
+      return 0;
+    }
+    accumulator += dtReal;
+    var steps = 0;
+    while (accumulator >= T.FIXED_STEP && steps < T.MAX_STEPS_PER_FRAME) {
+      for (var k = 0; k < s.speed; k++) R.simStep(s, T.FIXED_STEP);
+      accumulator -= T.FIXED_STEP;
+      steps++;
+    }
+    if (accumulator > T.FIXED_STEP * T.MAX_STEPS_PER_FRAME) accumulator = 0;
+    return steps;
+  };
+
   function frame(now) {
     global.requestAnimationFrame(frame);
     var s = R.state;
@@ -234,18 +255,7 @@
       dtReal = 0;
     }
 
-    if (R.isSimulating(s)) {
-      accumulator += dtReal;
-      var steps = 0;
-      while (accumulator >= T.FIXED_STEP && steps < T.MAX_STEPS_PER_FRAME) {
-        for (var k = 0; k < s.speed; k++) R.simStep(s, T.FIXED_STEP);
-        accumulator -= T.FIXED_STEP;
-        steps++;
-      }
-      if (accumulator > T.FIXED_STEP * T.MAX_STEPS_PER_FRAME) accumulator = 0;
-    } else {
-      accumulator = 0;
-    }
+    R.advance(s, dtReal);
 
     R.render.handleEvents(s);
     R.audio.handleEvents(s);

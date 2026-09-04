@@ -933,7 +933,7 @@
         R.util.mixColor(0x000000, flash ? 0xffffff : glintCol, (flash ? 0.85 : 0.4) * fade));
 
       if ((e.hp < e.maxHp || e.boss) && e.t >= 0) {
-        var w = Math.max(0.5, rad * 2.1);
+        var w = Math.max(0.34, rad * 2.1);
         var by = y + rad + 0.22;
         var frac = R.util.clamp(e.hp / e.maxHp, 0, 1);
         back.pushBillboard(e.x, by, e.z, w + 0.07, 0.16, 0x141a2c);

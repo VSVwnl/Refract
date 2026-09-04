@@ -635,3 +635,54 @@ sell and rebuy loop    lost       12   0   12    6   3    967   1517
 **Result:** 26 Node tests and 330 browser checks across fourteen scenarios pass. Every tuning target in section 15 is met by measurement, and no exploit survives.
 
 **Next step:** Phase 11 — performance verification on a real GPU.
+
+
+### Session 1 — 2026-09-04 — Phase 11: performance
+
+**Goal:** Meet the budgets in specification section 30 and prove the simulation is refresh-rate independent.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 11.
+
+**Tools:** Claude Code with the Claude Opus model; a new `perf` scenario using CDP CPU throttling, `performance.memory` and `requestAnimationFrame` sampling, run both in headless (software rasteriser) and against the real GPU with `node tools/qa.js perf --gpu`.
+
+**Work completed:**
+
+- `R.advance(state, dtReal)` extracted from the frame callback. The accumulator and fixed-step loop now live in one testable function, so the pacing can be driven at any refresh rate in a test and behave exactly as it does in the browser.
+- `tools/qa.js` gained a `--gpu` flag that launches a headed browser with GPU rasterisation, and `--enable-precise-memory-info` so heap size can be read.
+- HP bars for the smallest enemies were widening to a 0.5-unit floor and merging into a solid band when a swarm bunched up; the floor is now 0.34.
+- The instance-count optimisation from Phase 9 (only submitting instances actually written) is the main draw-call win and was already in place.
+
+**Measurements at the peak board** (wave 11, nine pieces including a splitter and a reflector, core level 6, 30 enemies, three lamps):
+
+| Budget | Target | Measured |
+|---|---|---|
+| Draw calls | ≤ 150 | **28** |
+| Geometries / textures | small | 26 / 6 |
+| Beam segments | ≤ 128 | within the pool |
+| Particles | ≤ 400 | within the pool |
+| Device pixel ratio | capped at 2 | capped |
+| Simulation, one fixed step | — | **0.005 ms** |
+| Render, one frame | — | **0.29 ms** |
+| HUD, one frame | — | **0.43 ms** |
+| Our work per frame | < 16.6 ms | **0.73 ms** |
+| Our work per frame, 4x CPU throttling | no frame > 50 ms | median 3.8, p95 6.5, **worst 11.9 ms** |
+| Observed frame gap, real GPU | 60 fps | **6.1 ms median (about 164 fps)** |
+| Observed frame gap, headless | — | 33.3 ms (rAF clamped to 30 Hz by headless Chromium, not a cost) |
+
+**Refresh-rate parity:** the same enemy, driven through `R.advance` at 30, 60, 120 and 144 Hz for thirty seconds of real time, reaches the core at **5.9 s of simulated time in every case**, and simulated time tracks real time to within 0.02 s. A single five-second stall advances the simulation by 0.083 s rather than replaying five seconds, so a long frame cannot fast-forward a wave.
+
+**Memory:** six consecutive restarts, each building five pieces and playing a full wave 9, leave the heap at 7087, 7023, 6967, 6877, 8774 and 8684 kB — 1.7 MB of drift between runs 2 and 6, which is ordinary garbage-collector timing rather than growth. Scene objects (34), geometries (26) and textures (6) are identical before and after.
+
+**Work considered and deliberately not done:** section 33 lists merging the static board geometry and an antialias fallback. Both were measured rather than assumed: at 28 draw calls against a budget of 150, and 0.73 ms of our own work per frame, neither would buy anything. They are recorded here as skipped with the numbers that justify it, rather than left half-built.
+
+**Problems found:** none in this phase. The only change was the HP-bar floor.
+
+**Fixes:** HP-bar minimum width 0.5 to 0.34 units so a bunched swarm does not read as one solid bar.
+
+**Decisions locked:** No changes to Part 1.
+
+**Balance changes:** none.
+
+**Result:** 26 Node tests and 347 browser checks across fifteen scenarios pass. Every budget in section 30 is met with a wide margin, and the simulation is provably identical at 30, 60, 120 and 144 Hz.
+
+**Next step:** Phase 12 — offline packaging and compliance on the release build.

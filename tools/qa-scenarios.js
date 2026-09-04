@@ -2157,4 +2157,218 @@ module.exports = function (S) {
       'strategies spread across the run: ' + JSON.stringify(waves));
   };
 
+  /* Phase 11: performance budgets, memory stability and refresh-rate parity. */
+  S.perf = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    /* A heavy but realistic late-game board. */
+    const setup = function () {
+      return st(function () {
+        window.__REFRACT.restart(7000);
+        const s = R.state;
+        s.gold = 100000;
+        s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+        [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1],
+          ['lamp', 2, 11, 0], ['lamp', 1, 6, 1], ['lamp', 1, 4, 0],
+          ['splitter', 7, 6, 1], ['mirror', 2, 5, 0], ['reflector', 5, 4, 0]
+        ].forEach(function (p) { window.__REFRACT.place(p[0], p[1], p[2], p[3]); });
+        for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+        s.wave = 10;
+        R.startWave(s);
+        window.__REFRACT.step(12);
+        return {
+          foes: s.enemies.length,
+          segments: s.beam.segCount,
+          lit: s.beam.litRoadCount,
+          pieces: s.pieces.size,
+          particles: R.render.particleCount()
+        };
+      });
+    };
+
+    const load = await setup();
+    ctx.log('  peak board: ' + JSON.stringify(load));
+    ctx.check(load.foes >= 5, 'the board is loaded (' + load.foes + ' enemies)');
+
+    /* --- budgets --- */
+    const budget = await st(function () {
+      R.render.renderOnce();
+      const info = R.render.info();
+      return info;
+    });
+    ctx.log('  renderer: ' + JSON.stringify(budget));
+    ctx.check(budget.calls <= 150, 'draw calls within 150 (' + budget.calls + ')');
+    ctx.check(budget.geometries <= 60, 'geometry count is small (' + budget.geometries + ')');
+    ctx.check(budget.textures <= 12, 'texture count is small (' + budget.textures + ')');
+    ctx.check(await st(function () { return R.state.beam.segCount <= R.BALANCE.MAX_SEGMENTS; }),
+      'beam segments within the pool');
+    ctx.check(await st(function () { return R.render.particleCount() <= 400; }),
+      'particles within the pool');
+    ctx.check(await st(function () { return Math.min(devicePixelRatio, 2) === R.render.renderer.getPixelRatio(); }),
+      'device pixel ratio is capped at 2');
+
+    /* --- cost of one full frame of our own work --- */
+    const costs = await st(function () {
+      const s = R.state;
+      let t0 = performance.now();
+      for (let i = 0; i < 600; i++) R.simStep(s, 1 / 60);
+      const sim = (performance.now() - t0) / 600;
+      t0 = performance.now();
+      for (let i = 0; i < 120; i++) R.render.draw(s, 1 / 60);
+      const draw = (performance.now() - t0) / 120;
+      t0 = performance.now();
+      for (let i = 0; i < 120; i++) R.ui.frame(s, 1 / 60);
+      const ui = (performance.now() - t0) / 120;
+      return {
+        sim: Math.round(sim * 1000) / 1000,
+        draw: Math.round(draw * 1000) / 1000,
+        ui: Math.round(ui * 1000) / 1000
+      };
+    });
+    ctx.log('  per frame: sim ' + costs.sim + ' ms, render ' + costs.draw + ' ms, HUD ' + costs.ui + ' ms');
+    ctx.check(costs.sim + costs.draw + costs.ui < 16.6,
+      'one frame of our own work fits in a 60 Hz budget (' +
+      Math.round((costs.sim + costs.draw + costs.ui) * 100) / 100 + ' ms)');
+
+    /* --- the same, with the CPU throttled four times --- */
+    await ctx.cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    await setup();
+    const slow = await st(function () {
+      const s = R.state;
+      const samples = [];
+      for (let i = 0; i < 90; i++) {
+        const t0 = performance.now();
+        R.simStep(s, 1 / 60);
+        R.render.draw(s, 1 / 60);
+        R.ui.frame(s, 1 / 60);
+        samples.push(performance.now() - t0);
+      }
+      samples.sort(function (a, b) { return a - b; });
+      return {
+        median: Math.round(samples[45] * 100) / 100,
+        p95: Math.round(samples[85] * 100) / 100,
+        worst: Math.round(samples[samples.length - 1] * 100) / 100
+      };
+    });
+    ctx.log('  with 4x CPU throttling, our work per frame: ' + JSON.stringify(slow));
+    ctx.check(slow.worst < 50, 'no frame of our own work exceeds 50 ms under 4x throttling (' + slow.worst + ')');
+    ctx.check(slow.median < 16.6, 'median frame work stays inside 60 Hz under 4x throttling (' + slow.median + ')');
+    await ctx.cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+
+    /* --- refresh-rate parity --- */
+    const parity = await st(function () {
+      function runAt(hz, seconds) {
+        window.__REFRACT.restart(7100);
+        const s = R.state;
+        s.gold = 500;
+        R.pieces.place(s, 'mirror', 7, 3, 1);
+        s.countdown = 9999;
+        const e = R.enemies.spawn(s, 'mote');
+        e.speed = 1;
+        const dt = 1 / hz;
+        const frames = Math.round(seconds * hz);
+        let arrived = null;
+        for (let i = 0; i < frames; i++) {
+          R.advance(s, dt);
+          if (arrived === null && s.enemies.length === 0) arrived = s.time;
+        }
+        return {
+          hz: hz,
+          simTime: Math.round(s.time * 1000) / 1000,
+          arrived: arrived === null ? null : Math.round(arrived * 1000) / 1000,
+          leaks: s.leaksBy.mote
+        };
+      }
+      return [runAt(30, 30), runAt(60, 30), runAt(120, 30), runAt(144, 30)];
+    });
+    ctx.log('  refresh-rate parity: ' + JSON.stringify(parity));
+    const times = parity.map(function (p) { return p.arrived; });
+    ctx.check(times.every(function (t) { return t !== null; }), 'the enemy reached the core at every rate');
+    ctx.check(Math.max.apply(null, times) - Math.min.apply(null, times) <= 0.02,
+      'arrival time matches at 30, 60, 120 and 144 Hz: ' + JSON.stringify(times));
+    ctx.check(parity.every(function (p) { return Math.abs(p.simTime - 30) < 0.05; }),
+      'simulated time tracks real time at every rate: ' +
+      JSON.stringify(parity.map(function (p) { return p.simTime; })));
+
+    /* --- a long frame does not fast-forward the game --- */
+    const stall = await st(function () {
+      window.__REFRACT.restart(7200);
+      const s = R.state;
+      const before = s.time;
+      R.advance(s, 5);
+      return Math.round((s.time - before) * 1000) / 1000;
+    });
+    ctx.log('  a five second stall advanced the simulation by ' + stall + ' s');
+    ctx.check(stall <= 0.09, 'a long frame is clamped rather than replayed');
+
+    /* --- heap stability across restarts --- */
+    const heap = await st(function () {
+      if (!performance.memory) return null;
+      const out = [];
+      for (let n = 0; n < 6; n++) {
+        R.restartRun(7300 + n);
+        const s = R.state;
+        s.gold = 5000;
+        s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+        [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1],
+          ['lamp', 2, 11, 0], ['splitter', 7, 6, 1]].forEach(function (p) {
+          window.__REFRACT.place(p[0], p[1], p[2], p[3]);
+        });
+        s.wave = 9;
+        R.startWave(s);
+        for (let i = 0; i < 1800; i++) {
+          R.simStep(s, 1 / 60);
+          R.render.handleEvents(s);
+          s.events.length = 0;
+          if (s.phase !== 'wave') break;
+        }
+        out.push(Math.round(performance.memory.usedJSHeapSize / 1024));
+      }
+      return out;
+    });
+    if (heap) {
+      ctx.log('  heap after each of six full waves (kB): ' + JSON.stringify(heap));
+      const growth = heap[heap.length - 1] - heap[1];
+      ctx.check(growth < 4096, 'heap does not grow across repeated runs (' + growth + ' kB from run 2 to run 6)');
+    } else {
+      ctx.log('  performance.memory unavailable; heap growth not measured');
+    }
+
+    const meshes = await st(function () {
+      const info = R.render.info();
+      return { objects: info.objects, geometries: info.geometries, textures: info.textures };
+    });
+    ctx.log('  scene after restarts: ' + JSON.stringify(meshes));
+    ctx.eq(meshes.objects, budget.objects, 'no scene objects leak across restarts');
+    ctx.eq(meshes.geometries, budget.geometries, 'no geometries leak across restarts');
+
+    /* --- real frame rate --- */
+    await setup();
+    const fps = await st(function () {
+      return new Promise(function (resolve) {
+        const gaps = [];
+        let last = performance.now();
+        let n = 0;
+        function tick(now) {
+          gaps.push(now - last);
+          last = now;
+          if (++n < 120) requestAnimationFrame(tick);
+          else {
+            gaps.shift();
+            gaps.sort(function (a, b) { return a - b; });
+            resolve({
+              median: Math.round(gaps[Math.floor(gaps.length / 2)] * 100) / 100,
+              p95: Math.round(gaps[Math.floor(gaps.length * 0.95)] * 100) / 100,
+              calls: R.render.info().calls
+            });
+          }
+        }
+        requestAnimationFrame(tick);
+      });
+    });
+    ctx.log('  observed frame gaps at peak: ' + JSON.stringify(fps) +
+      (ctx.gpu ? '  (GPU)' : '  (software rasteriser, rAF clamped)'));
+    await ctx.snap('peak-board');
+  };
+
 };
