@@ -80,20 +80,45 @@ const banned = [
   ['serviceWorker', /serviceWorker/],
   ['sendBeacon', /sendBeacon/],
   ['<link rel=', /<link\s/i],
-  ['ES module script', /<script[^>]*type\s*=\s*["']module["']/i]
+  ['ES module script', /<script[^>]*type\s*=\s*["']module["']/i],
+  ['document.write', /document\s*\.\s*write/],
+  ['inline event handler', /\son(?:click|load|error)\s*=/i]
 ];
 banned.forEach(function (entry) {
   if (entry[1].test(code)) fail('banned pattern found in index.html: ' + entry[0]);
 });
 
-/* 4. Release builds carry no debug code. */
+/* Only the development tools are allowed to build code or print to the console. */
+const releaseOnlyBanned = [
+  ['eval(', /eval\s*\(/],
+  ['new Function(', /new\s+Function\s*\(/],
+  ['console output', /console\s*\./]
+];
 if (!allowDebug) {
-  ['__REFRACT', 'debug=1', '99_debug.js', 'debugPanel'].forEach(function (needle) {
-    if (html.indexOf(needle) >= 0) fail('release build contains debug string: ' + needle);
+  releaseOnlyBanned.forEach(function (entry) {
+    if (entry[1].test(code)) fail('banned pattern found in index.html: ' + entry[0]);
   });
 }
 
-/* 5. Readability: our code must not look minified. */
+/* 4. Release builds carry no debug code at all. */
+if (!allowDebug) {
+  ['__REFRACT', 'debug=1', '99_debug.js', 'debugPanel', 'R.debug'].forEach(function (needle) {
+    if (html.indexOf(needle) >= 0) fail('release build contains debug string: ' + needle);
+  });
+  if (/debug/i.test(html)) fail('release build still mentions "debug"');
+}
+
+/* 5. Guarded access to the optional browser APIs. */
+['localStorage', 'AudioContext'].forEach(function (api) {
+  var re = new RegExp(api, 'g');
+  var uses = (code.match(re) || []).length;
+  var guards = (code.match(/try\s*\{/g) || []).length;
+  if (uses > 0 && guards < 4) {
+    fail(api + ' is used but there are too few try/catch guards (' + guards + ')');
+  }
+});
+
+/* 6. Readability: our code must not look minified. */
 let longest = 0;
 let longestLine = 0;
 lines.forEach(function (line, i) {
@@ -102,7 +127,7 @@ lines.forEach(function (line, i) {
 if (longest > 1000) fail('line ' + longestLine + ' is ' + longest + ' characters long (minified?)');
 if (lines.length < 500) fail('index.html has only ' + lines.length + ' lines, which suggests missing source');
 
-/* 6. One banner comment per inlined source file. */
+/* 7. One banner comment per inlined source file. */
 const inlineScripts = (html.match(/<script>/g) || []).length;
 const banners = (html.match(/^   [0-9]{2}_[a-z]+\.js$/gm) || []).length;
 if (banners !== inlineScripts) {
@@ -110,7 +135,7 @@ if (banners !== inlineScripts) {
 }
 note('inlined source files: ' + inlineScripts);
 
-/* 7. No text addressed to evaluators or automated tools. */
+/* 8. No text addressed to evaluators or automated tools. */
 const addressed = [
   /\bjudges?\b/i, /\breviewers?\b/i, /\bevaluat/i, /\bgrader/i,
   /\bAI (?:system|tool|model|assistant)/i, /language model/i,
@@ -121,7 +146,7 @@ addressed.forEach(function (re) {
   if (hit) fail('text addressed to evaluators or AI tools may be present: ' + hit[0]);
 });
 
-/* 8. Vendor files. */
+/* 9. Vendor files. */
 const vendorJs = path.join(ROOT, 'vendor', 'three.min.js');
 const vendorLic = path.join(ROOT, 'vendor', 'LICENSE-three.txt');
 if (!fs.existsSync(vendorJs)) fail('vendor/three.min.js is missing');
@@ -134,7 +159,7 @@ if (fs.existsSync(vendorJs)) {
   if (sha !== EXPECT) fail('vendor/three.min.js has changed (expected sha256 ' + EXPECT.slice(0, 16) + ')');
 }
 
-/* 9. Size. */
+/* 10. Size. */
 const bytes = Buffer.byteLength(html, 'utf8');
 note('index.html          ' + bytes + ' bytes, ' + lines.length + ' lines, longest line ' + longest);
 if (bytes > 5 * 1024 * 1024) fail('index.html is unexpectedly large: ' + bytes + ' bytes');

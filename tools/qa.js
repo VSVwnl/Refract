@@ -184,6 +184,18 @@ async function main() {
   const pageErrors = [];
   const requests = [];
   const page = await context.newPage();
+
+  /* --offline aborts anything that is not the page being tested. */
+  if (flag('offline')) {
+    const origin = url.startsWith('file:') ? 'file:' : new URL(url).origin;
+    await page.route('**/*', function (route) {
+      const target = route.request().url();
+      const local = origin === 'file:' ? target.startsWith('file:') : target.indexOf(origin) === 0;
+      if (local) route.continue();
+      else route.abort();
+    });
+  }
+
   page.on('console', function (m) { consoleMsgs.push(m.type() + ': ' + m.text()); });
   page.on('pageerror', function (e) { pageErrors.push(String(e && e.stack || e)); });
   page.on('requestfailed', function (r) { requests.push('FAILED ' + r.url()); });

@@ -66,4 +66,6 @@ if (fs.existsSync(intentPath)) {
   console.log('\ndocs/design-intent.md does not exist yet.');
 }
 
+run(process.execPath, ['tools/scan-artifacts.js'], 'artifact scan');
+
 console.log('\nDone. Artifacts in dist/.');

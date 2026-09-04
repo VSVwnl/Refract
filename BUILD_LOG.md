@@ -686,3 +686,62 @@ sell and rebuy loop    lost       12   0   12    6   3    967   1517
 **Result:** 26 Node tests and 347 browser checks across fifteen scenarios pass. Every budget in section 30 is met with a wide margin, and the simulation is provably identical at 30, 60, 120 and 144 Hz.
 
 **Next step:** Phase 12 — offline packaging and compliance on the release build.
+
+
+### Session 1 — 2026-09-04 — Phase 12: offline build and compliance
+
+**Goal:** Prove the release build is self-contained, compliant, and playable offline from a clean unzip.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 12 and section 41.
+
+**Tools:** Claude Code with the Claude Opus model; `tools/package.js`, `tools/make_zip.py`, `tools/check.js`, `tools/scan-artifacts.js`; Playwright with all non-local requests aborted at the route level.
+
+**Work completed:**
+
+- `tools/package.js`: release build, compliance check, unit tests, zip, `dist/buildlog.md`, `dist/design-intent.docx`, then an artifact scan — one command produces everything that gets uploaded.
+- `tools/make_zip.py` builds the zip with Python's `zipfile` (not PowerShell's `Compress-Archive`) with fixed timestamps and forward-slash entry names, then reopens it and verifies the entry list, the absence of backslashes and the size limit.
+- `tools/scan-artifacts.js`: scans `index.html`, `dist/buildlog.md`, `docs/design-intent.md` and `SUBMISSION_NOTES.md` for email addresses, Windows or home directory paths, code-host profile links, placeholder markers, text addressed to evaluators, and the author's own git name and email. The build log is the one file allowed to name the AI tools used, because the official build-log guidance asks for that; nothing else may.
+- `tools/check.js` extended: `eval(`, `new Function(` and `console.` are now banned in release builds (allowed in the development build, where the debug tools use them); `document.write` and inline event handlers are banned outright; the release must not contain the word "debug" at all; and `localStorage`/`AudioContext` use is cross-checked against the number of `try` blocks.
+- `tools/qa.js --offline` aborts every request that is not the page under test, at the route level, so an accidental external fetch fails the run rather than silently succeeding.
+- New `release` scenario: drives the **release build only through its real controls and its real HUD**, with no debug API at all. It reads gold, HP, wave, LIT, palette lock states and the core button's price straight from the DOM, and buys the next item on a shopping list whenever the HUD says it can afford it.
+- `docs/design-intent.md` written (454 words of body text, 496 including headings, seven sections in order) and `tools/make_docx.py` added to turn it into `dist/design-intent.docx`; `python-docx` was installed so the .docx is generated rather than left to the human.
+- `SUBMISSION_NOTES.md` written.
+
+**Problems found:**
+
+1. The release build still contained two `if (R.debug)` branches — dead code for a module that never ships, and exactly the kind of leftover scaffolding a code reviewer would notice.
+
+**Fixes:**
+
+1. The debug module now attaches itself: it installs `window.__REFRACT` on `DOMContentLoaded` and, at level 2, wraps `R.render.draw` to add its panel update. The game module has no reference to it at all. Verified: the shipped `index.html` contains zero occurrences of the string "debug", and `tools/check.js` now fails the release if any appear.
+
+**Browser testing — the packaged artifact, played offline:**
+
+`dist/refract.zip` was extracted into a clean empty folder, served from that folder alone, and opened with every non-local request aborted.
+
+- **Won all twelve waves using nothing but taps**, in 249 s of real time at 2x speed: "THE LIGHT HELD", 5 core HP left, LIT 23/25, score 1837, all eleven planned purchases made through the palette and the CORE button.
+- PLAY AGAIN returned a clean board (40 gold, 20 HP, LIT 1, no overlay), and a second run with nothing placed lost on wave 3 with the coverage tip and a TRY AGAIN button.
+- **Exactly two requests** for the whole session: the page and `vendor/three.min.js`.
+- No automation API, no debug panel, no debug module; the page title is REFRACT.
+- Console: no messages from our code.
+- The same build was checked at 390x844, 360x800, 393x852, 430x932, 360x640 and a 1280x800 desktop window, all offline, all passing.
+- The build also loads and runs from a `file://` URL, again with exactly two file reads.
+
+**Zip contents, verified by reopening the archive:**
+
+```
+index.html                160,979 bytes
+vendor/three.min.js       608,081 bytes
+vendor/LICENSE-three.txt    1,081 bytes
+dist/refract.zip          196,404 bytes (0.19 MB) against a 35 MB limit
+```
+
+`index.html` is 5,402 lines, longest line 170 characters, with a banner comment naming each of the twelve source files, and opens with a generated header listing them in load order. Greps of the shipped file: zero occurrences of `console.`, `eval(`, `new Function`, `__REFRACT`, `debug`, `http`, `fetch`, `XMLHttpRequest`, `WebSocket`, `import(`, `serviceWorker`. Two occurrences of `localStorage`, both inside the guarded helpers.
+
+**Decisions locked:** No changes to Part 1. Added: the development tools attach themselves to the game rather than being called from it, so the release build carries no reference to them.
+
+**Balance changes:** none.
+
+**Result:** The exact file that will be uploaded has been played to a win and to a loss, offline, from a clean unzip, using only the controls a player has.
+
+**Next step:** Phase 13 — the full acceptance checklist.

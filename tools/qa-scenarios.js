@@ -2371,4 +2371,338 @@ module.exports = function (S) {
     await ctx.snap('peak-board');
   };
 
+  /*
+   * Phase 12: the exact release build, unpacked from the zip, played offline
+   * with no debug tools. Everything here drives real controls and reads the
+   * real HUD; the only game code it touches is the projection helper needed to
+   * work out where a board cell is on screen.
+   */
+  S.release = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    /* --- the debug tools are gone --- */
+    const clean = await st(function () {
+      return {
+        api: typeof window.__REFRACT,
+        panel: !!document.getElementById('debugPanel'),
+        debugModule: typeof R.debug,
+        hasR: typeof R,
+        title: document.title
+      };
+    });
+    ctx.log('  release build: ' + JSON.stringify(clean));
+    ctx.eq(clean.api, 'undefined', 'no automation API in the release build');
+    ctx.eq(clean.panel, false, 'no debug panel');
+    ctx.eq(clean.debugModule, 'undefined', 'no debug module');
+    ctx.eq(clean.title, 'REFRACT', 'the page is titled');
+
+    /* --- read the game only through its HUD --- */
+    const hud = function () {
+      return st(function () {
+        const txt = function (id) { return document.getElementById(id).textContent.replace(/\s+/g, ' ').trim(); };
+        const overlay = document.querySelector('#overlayRoot .overlay');
+        const pal = {};
+        Array.prototype.forEach.call(document.querySelectorAll('#palette .pbtn'), function (b) {
+          pal[b.dataset.type] = {
+            locked: b.classList.contains('locked'),
+            cost: parseInt(b.querySelector('.pcost').textContent, 10)
+          };
+        });
+        const core = document.getElementById('btnCore');
+        return {
+          gold: parseInt(txt('statGold').replace(/[^0-9]/g, ''), 10),
+          hp: parseInt(txt('statHp').replace(/[^0-9\/]/g, '').split('/')[0], 10),
+          wave: parseInt(txt('statWave').replace(/[^0-9/]/g, '').split('/')[0], 10),
+          lit: parseInt(txt('statLit').replace(/[^0-9/]/g, '').split('/')[0], 10),
+          coreCost: core.querySelector('.a2').textContent.indexOf('MAX') >= 0
+            ? null : parseInt(core.querySelector('.a2').textContent, 10),
+          palette: pal,
+          overlay: overlay ? overlay.textContent.replace(/\s+/g, ' ').trim() : null
+        };
+      });
+    };
+
+    let m = await hud();
+    ctx.check(m.overlay && m.overlay.indexOf('REFRACT') === 0, 'the title card is up');
+    await ctx.snap('a-title');
+
+    await ctx.tap('#overlayRoot .bigbtn');
+    await ctx.tap('#btnSpeed');
+    m = await hud();
+    ctx.eq(m.gold, 40, 'the run starts with 40 gold');
+    ctx.eq(m.hp, 20, 'the run starts with 20 core HP');
+
+    /* --- play a whole run by tapping, in real time at double speed --- */
+    const PLAN = [
+      { k: 'mirror', c: 7, r: 3 },
+      { k: 'mirror', c: 0, r: 3 },
+      { k: 'mirror', c: 0, r: 10 },
+      { k: 'core' }, { k: 'core' }, { k: 'core' },
+      { k: 'lamp', c: 2, r: 11 },
+      { k: 'lamp', c: 1, r: 6 },
+      { k: 'core' },
+      { k: 'lamp', c: 1, r: 4 },
+      { k: 'core' }
+    ];
+    let plan = 0;
+    const started = Date.now();
+    let result = null;
+    let peakWave = 0;
+
+    while (Date.now() - started < 420000) {
+      m = await hud();
+      if (m.overlay) { result = m.overlay; break; }
+      if (m.wave > peakWave) peakWave = m.wave;
+
+      if (plan < PLAN.length) {
+        const next = PLAN[plan];
+        if (next.k === 'core') {
+          if (m.coreCost === null) plan++;
+          else if (m.gold >= m.coreCost) { await ctx.tap('#btnCore'); plan++; }
+        } else {
+          const info = m.palette[next.k];
+          if (info && !info.locked && m.gold >= info.cost) {
+            await ctx.tap('#palette .pbtn[data-type="' + next.k + '"]');
+            await ctx.tapCell(next.c, next.r);
+            plan++;
+          }
+        }
+      }
+      await ctx.page.waitForTimeout(350);
+    }
+
+    ctx.log('  offline run result: ' + result);
+    ctx.log('  bought ' + plan + ' of ' + PLAN.length + ' planned purchases, peak wave ' + peakWave +
+      ', ' + Math.round((Date.now() - started) / 1000) + 's of real time at 2x speed');
+    ctx.check(!!result, 'the run reached a result');
+    ctx.check(result.indexOf('THE LIGHT HELD') >= 0,
+      'the release build can be played to a win with only taps');
+    ctx.check(result.indexOf('CONTINUE') >= 0, 'endless is offered');
+    await ctx.snap('b-result');
+
+    /* --- restart from the result screen --- */
+    await ctx.tap('#overlayRoot .bigbtn');
+    await ctx.page.waitForTimeout(200);
+    m = await hud();
+    ctx.eq(m.gold, 40, 'PLAY AGAIN gives a clean board');
+    ctx.eq(m.hp, 20, 'core HP is restored');
+    ctx.eq(m.lit, 1, 'the beam is back to its starting route');
+    ctx.eq(m.overlay, null, 'no overlay after restart');
+
+    /* --- and a deliberate loss --- */
+    const lossStart = Date.now();
+    let lost = null;
+    while (Date.now() - lossStart < 240000) {
+      m = await hud();
+      if (m.overlay) { lost = m.overlay; break; }
+      await ctx.page.waitForTimeout(400);
+    }
+    ctx.log('  loss result: ' + lost);
+    ctx.check(lost && lost.indexOf('THE CORE FELL') >= 0, 'placing nothing loses');
+    ctx.check(lost && lost.indexOf('TRY AGAIN') >= 0, 'the defeat screen offers another run');
+    await ctx.snap('c-defeat');
+  };
+
+  /* Phase 13: the remaining acceptance items from specification section 35. */
+  S.acceptance = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    /* --- escalation is measurable: the same build meets waves 3 and 8 --- */
+    const escalation = await st(function () {
+      function runWave(w) {
+        window.__REFRACT.restart(8000);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.gold = 500;
+        window.__REFRACT.place('mirror', 7, 3, 1);
+        s.wave = w - 1;
+        R.startWave(s);
+        window.__REFRACT.stepUntil('s.phase !== "wave"', 300);
+        const leaked = Object.keys(s.leaksBy).reduce(function (a, k) { return a + s.leaksBy[k]; }, 0);
+        return {
+          wave: w,
+          hpLost: R.BALANCE.CORE_HP - s.coreHp,
+          leaked: leaked,
+          enemies: s.waveEnemiesTotal,
+          killed: s.waveEnemiesTotal - leaked
+        };
+      }
+      return { w3: runWave(3), w8: runWave(8) };
+    });
+    ctx.log('  same build, wave 3: ' + JSON.stringify(escalation.w3));
+    ctx.log('  same build, wave 8: ' + JSON.stringify(escalation.w8));
+    ctx.check(escalation.w8.hpLost > escalation.w3.hpLost,
+      'wave 8 costs more core HP than wave 3 with an identical build (' +
+      escalation.w3.hpLost + ' vs ' + escalation.w8.hpLost + ')');
+    ctx.check(escalation.w8.enemies > escalation.w3.enemies,
+      'wave 8 sends more enemies than wave 3 (' + escalation.w3.enemies + ' vs ' + escalation.w8.enemies + ')');
+
+    /* --- the core loop is reachable inside fifteen seconds --- */
+    const opening = await st(function () {
+      window.__REFRACT.title();
+      const beforePlay = R.state.beam.litRoadCount;
+      R.startRun();
+      const s = R.state;
+      return { litOnTitle: beforePlay, countdown: s.countdown, lit: s.beam.litRoadCount };
+    });
+    ctx.log('  opening: ' + JSON.stringify(opening));
+    ctx.eq(opening.litOnTitle, 1, 'the beam is already burning road behind the title card');
+    ctx.check(opening.countdown <= 15, 'the first wave arrives within fifteen seconds of PLAY');
+
+    /* --- every control does something --- */
+    const controls = await st(function () {
+      window.__REFRACT.restart(8100);
+      const s = R.state;
+      s.gold = 900;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      const out = [];
+      const click = function (sel) {
+        const el = document.querySelector(sel);
+        if (!el) return 'missing';
+        el.click();
+        return 'clicked';
+      };
+      const snapshot = function () {
+        return JSON.stringify({
+          phase: s.phase, speed: s.speed, gold: s.gold, core: s.coreLevel,
+          muted: R.meta.muted, help: s.ui.helpOpen, wave: s.wave,
+          sel: s.ui.selectedType, overlay: !!document.querySelector('#overlayRoot .overlay')
+        });
+      };
+
+      [['#btnSpeed', 'speed toggle'],
+        ['#btnMute', 'mute'],
+        ['#btnHelp', 'help'],
+        ['#btnHelp', 'help again'],
+        ['#btnPause', 'pause'],
+        ['#btnPause', 'resume'],
+        ['#btnCore', 'core upgrade'],
+        ['#palette .pbtn[data-type="splitter"]', 'palette splitter'],
+        ['#palette .pbtn[data-type="mirror"]', 'palette mirror'],
+        ['#btnNext', 'next wave']
+      ].forEach(function (pair) {
+        const before = snapshot();
+        const result = click(pair[0]);
+        R.ui.frame(s, 0.016);
+        out.push({ control: pair[1], found: result, changed: snapshot() !== before });
+      });
+      return out;
+    });
+    controls.forEach(function (c) {
+      ctx.check(c.found === 'clicked' && c.changed, 'the ' + c.control + ' button does something');
+    });
+
+    /* --- no placeholder text anywhere on screen --- */
+    const text = await st(function () {
+      window.__REFRACT.restart(8200);
+      const seen = [];
+      const collect = function () {
+        seen.push(document.getElementById('app').innerText.replace(/\s+/g, ' '));
+      };
+      collect();
+      R.ui.openHelp();
+      R.ui.frame(R.state, 0.016);
+      collect();
+      R.ui.closeHelp();
+      window.__REFRACT.forceWin();
+      R.ui.frame(R.state, 0.016);
+      collect();
+      window.__REFRACT.restart(8201);
+      window.__REFRACT.forceLose();
+      R.ui.frame(R.state, 0.016);
+      collect();
+      window.__REFRACT.title();
+      R.ui.frame(R.state, 0.016);
+      collect();
+      return seen.join(' | ');
+    });
+    ['TODO', 'TBD', 'FIXME', 'Lorem', 'placeholder', 'coming soon', 'undefined', 'NaN', 'null']
+      .forEach(function (word) {
+        ctx.check(text.toLowerCase().indexOf(word.toLowerCase()) < 0,
+          'no "' + word + '" appears in any screen');
+      });
+
+    /* --- three consecutive full runs without reloading --- */
+    const runs = await st(function () {
+      const out = [];
+      for (let n = 0; n < 3; n++) {
+        window.__REFRACT.restart(8300 + n);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.gold = 5000;
+        s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+        [['mirror', 7, 3, 1], ['mirror', 0, 3, 0], ['mirror', 0, 10, 1],
+          ['lamp', 2, 11, 0], ['lamp', 1, 6, 1], ['lamp', 1, 4, 0]].forEach(function (p) {
+          window.__REFRACT.place(p[0], p[1], p[2], p[3]);
+        });
+        for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+        for (let w = 1; w <= 12; w++) {
+          window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+          window.__REFRACT.stepUntil('s.phase !== "wave"', 300);
+          if (s.phase === 'won' || s.phase === 'lost') break;
+        }
+        out.push({ phase: s.phase, hp: s.coreHp, score: R.computeScore(s), calls: R.render.info().calls });
+      }
+      return out;
+    });
+    ctx.log('  three consecutive runs: ' + JSON.stringify(runs));
+    ctx.check(runs.every(function (r) { return r.phase === 'won'; }), 'three runs in a row all reach victory');
+    ctx.check(runs[0].hp === runs[1].hp && runs[1].hp === runs[2].hp,
+      'identical builds give identical results, so the simulation is deterministic');
+    ctx.check(runs[2].calls === runs[0].calls, 'draw calls do not creep across runs');
+
+    /* --- endless continues after a win --- */
+    const endless = await st(function () {
+      R.continueEndless();
+      const s = R.state;
+      window.__REFRACT.stepUntil('s.wave === 13 && s.phase === "wave"', 40);
+      return { endless: s.endless, wave: s.wave, label: document.getElementById('statWave').textContent.replace(/\s+/g, '') };
+    });
+    ctx.log('  endless: ' + JSON.stringify(endless));
+    ctx.eq(endless.endless, true, 'endless mode continues after a win');
+    ctx.eq(endless.wave, 13, 'endless starts at wave 13');
+
+    /* --- rapid input does not break anything --- */
+    const rapid = await st(function () {
+      window.__REFRACT.restart(8400);
+      const s = R.state;
+      s.gold = 200;
+      const buttons = ['#btnSpeed', '#btnPause', '#btnCore', '#btnNext',
+        '#palette .pbtn[data-type="mirror"]', '#palette .pbtn[data-type="splitter"]'];
+      for (let i = 0; i < 200; i++) {
+        const el = document.querySelector(buttons[i % buttons.length]);
+        if (el) el.click();
+      }
+      R.ui.frame(s, 0.016);
+      return { phase: s.phase, gold: s.gold, hp: s.coreHp, pieces: s.pieces.size, speed: s.speed };
+    });
+    ctx.log('  after 200 rapid button presses: ' + JSON.stringify(rapid));
+    ctx.check(rapid.gold >= 0, 'gold never goes negative under rapid input');
+    ctx.check(rapid.hp >= 0 && rapid.hp <= 20, 'core HP stays in range under rapid input');
+    ctx.check(['building', 'wave', 'paused', 'won', 'lost', 'title'].indexOf(rapid.phase) >= 0,
+      'the phase is still valid after rapid input');
+
+    const tiles = await st(function () {
+      window.__REFRACT.restart(8500);
+      const s = R.state;
+      s.gold = 40;
+      let errors = 0;
+      for (let r = 0; r < 12; r++) {
+        for (let c = 0; c < 8; c++) {
+          try {
+            R.pieces.place(s, 'mirror', c, r);
+            R.pieces.flip(s, c, r);
+            R.pieces.sell(s, c, r);
+          } catch (err) {
+            errors++;
+          }
+        }
+      }
+      return { errors: errors, gold: s.gold, pieces: s.pieces.size };
+    });
+    ctx.log('  every tile poked: ' + JSON.stringify(tiles));
+    ctx.eq(tiles.errors, 0, 'placing, flipping and selling on every tile throws nothing');
+    ctx.check(tiles.gold <= 40, 'poking every tile cannot create gold');
+  };
+
 };

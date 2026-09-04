@@ -192,7 +192,7 @@
   }
 
   function update(dtReal) {
-    if (!readout) return;
+    if (!readout || !R.state) return;
     frames++;
     fpsAcc += dtReal;
     if (fpsAcc >= 0.5) {
@@ -208,11 +208,25 @@
       '\nlit ' + s.beam.litRoadCount + '  calls ' + info.calls + '  seed ' + s.rngSeed;
   }
 
-  R.debug = {
-    install: function () {
-      global.__REFRACT = api();
-      if (level >= 2) buildPanel();
-    },
-    frame: update
-  };
+  /*
+   * The tools attach themselves rather than being called from the game, so the
+   * release build carries no reference to them at all.
+   */
+  function install() {
+    global.__REFRACT = api();
+    if (level >= 2) {
+      buildPanel();
+      var baseDraw = R.render.draw;
+      R.render.draw = function (state, dtReal) {
+        baseDraw(state, dtReal);
+        update(dtReal);
+      };
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', install);
+  } else {
+    install();
+  }
 })(typeof window !== 'undefined' ? window : globalThis);
