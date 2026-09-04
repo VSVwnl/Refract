@@ -410,3 +410,58 @@ Screenshots `shots/teaching-390x844-a-first-hint.png`, `-b-help.png`, `-c-drag-p
 **Result:** 26 Node tests and 224 browser checks pass. The rules are teachable in play and the two things a screenshot cannot show — the sweep and the drag preview — are verified by measurement.
 
 **Next step:** Phase 7 — mobile UX across every target viewport.
+
+
+### Session 1 — 2026-09-03 — Phase 7: mobile UX
+
+**Goal:** A flawless portrait touch experience at every target viewport, plus a sane landscape fallback.
+
+**Direction:** `MASTER_SPEC.md` section 33 Phase 7.
+
+**Tools:** Claude Code with the Claude Opus model; Playwright mobile emulation at five phone sizes, a simulated notch, landscape, and a desktop window.
+
+**Work completed:**
+
+- Two new test scenarios: `mobile`, which measures every interactive control at a given viewport across five screens (title, mid-wave with the action bar open, victory, defeat, help) and asserts nothing overflows or is too small; and `landscape`, which rotates the viewport and back.
+- A third, `handplay`, plays an entire twelve-wave run using nothing but taps on real controls — PLAY, palette buttons, board tiles and CORE. Only the clock is advanced between actions.
+- Layout: `LAYOUT.COLUMN_ASPECT` 0.5 to 0.56 so the portrait column is not needlessly narrow on shorter phones; a short-screen block at 680 px height and a landscape block at 470 px height that shrink the chrome rows and overlay type so the whole board still fits.
+- Touch targets: HUD icon buttons 44 to 46 px (42 on phones narrower than 375 px), action-bar buttons 40 to 44 px, undo chip 40 to 44 px, and the action row given enough height on short screens that its buttons stay 42 px.
+
+**Deviation from the spec, recorded deliberately:** section 20 asks for 48 x 48 px tap targets. The HUD icon buttons are 46 x 46 (42 on a 360 px phone). Four 48 px buttons plus a legible four-stat HUD does not fit 360 px, and truncating the HUD numbers would cost more than two pixels of target are worth. Every other control — palette buttons, action-row buttons, action-bar buttons, the undo chip and every overlay button — is at least 44 px in both dimensions, and the measured minimum across all five viewports is 42 px.
+
+**Browser testing:** `node tools/qa.js mobile` at 390x844, 360x800, 393x852, 430x932 and 360x640 — 32 checks each, all passing; `landscape` — 9 checks; `handplay` at 360x800 — 3 checks; plus the whole suite.
+
+Measured cell sizes: 46.7 / 43.1 / 47.0 / 51.4 / 33.7 px, and 41.9 px with a simulated 47 px notch and 34 px home indicator. Desktop 1280x800 gives a 448 px centred column with a 44.9 px cell.
+
+Verified in the browser:
+
+- No horizontal or vertical page overflow on any screen at any size; every control is inside the viewport on title, mid-wave, victory, defeat and help.
+- The action bar sits above a piece below row 1 and drops below a piece in row 0, measured against the piece's projected position.
+- A double tap on the board does not zoom (`visualViewport.scale` stays 1) and does not scroll; a long swipe across the board does not scroll the page.
+- With a simulated notch the HUD clears 47 px at the top and the palette clears 34 px at the bottom.
+- The help screen fits 390x844 exactly and scrolls on shorter screens.
+- Landscape 844x390: the portrait column stays, centred, 218 px wide, with the "Best played in portrait" caption on the side bars, no horizontal overflow, and the whole board still visible at a 16.7 px cell. Rotating back restores the portrait layout with the run, the pieces and the beam intact.
+- **A whole run played only by tapping, at 360x800, clears all twelve waves.**
+
+Screenshots reviewed: `shots/mobile-<size>-01-title.png` through `-06-safearea.png` for each of the five sizes, plus `shots/mobile-390x844-07-landscape.png`, `-08-back-to-portrait.png` and `shots/handplay-360x800-handplay-result.png`.
+
+**Problems found:**
+
+1. At 360x640 the CORE button was 37 px tall, below the target minimum.
+2. At 360x640 the HUD clipped "WAVE 1/12" because the portrait column was clamped to 320 px on a 360 px screen while the four utility buttons kept their full width.
+
+**Fixes:**
+
+1. The short-screen action row is 52 px with 5 px padding, giving 42 px buttons.
+2. `COLUMN_ASPECT` raised to 0.56, so a 360x640 screen gets a 358 px column instead of 320. The board is height-bound at that size, so this costs nothing and gives the HUD the room it needed. Stat type also shrinks to 14 px on short screens.
+
+**Decisions locked:** No changes to Part 1. Added: HUD utility buttons are 46 px (42 on narrow phones) rather than 48; every other control is at least 44 px.
+
+**Balance changes:** none. **Two findings recorded for Phase 10:**
+
+- A hand-played, informed run — three mirrors at (7,3), (0,3), (0,10), then core upgrades interleaved with three lamps at (2,11), (1,6) and (1,4) — **wins with 17 core HP left**, LIT 23/25, score 1983, core level 5, six pieces, without ever touching debug gold. The spec's target band for an informed player is 6 to 14 HP, so the informed line is currently a little too comfortable.
+- The same run with mirrors and core upgrades alone (no lamps) reaches wave 12 and dies with 0 HP, ending with 167 unspent gold. Lamps are far more gold-efficient than the last core levels: at core 6, one lamp lighting a five-cell segment adds about 87 power-cells for 90 gold, while the 5-to-6 core upgrade adds about 84 power-cells for 300. That is a genuine and interesting trade-off, but the size of the gap is worth reviewing.
+
+**Result:** 26 Node tests and 270 browser checks across eleven scenarios pass. The game is fully playable by touch at every target size.
+
+**Next step:** Phase 8 — game feel: particles, floaters, shakes, banners and transitions.

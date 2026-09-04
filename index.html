@@ -167,8 +167,8 @@ body.wide #sideNote { display: block; }
 }
 
 .iconbtn {
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--panel-2);
@@ -505,8 +505,8 @@ body.wide #sideNote { display: block; }
 }
 
 #actionBar button {
-  min-width: 52px;
-  height: 40px;
+  min-width: 54px;
+  height: 44px;
   border-radius: 8px;
   border: 1px solid var(--accent);
   background: rgba(14, 22, 44, 0.96);
@@ -524,13 +524,13 @@ body.wide #sideNote { display: block; }
   left: 50%;
   bottom: 8px;
   transform: translateX(-50%);
-  height: 40px;
-  padding: 0 16px;
-  border-radius: 20px;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 22px;
   border: 1px solid var(--accent);
   background: rgba(14, 22, 44, 0.96);
   color: var(--ink);
-  font: 700 13px/38px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 700 13px/42px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   letter-spacing: 0.08em;
   pointer-events: auto;
   z-index: 4;
@@ -664,15 +664,37 @@ body.wide #sideNote { display: block; }
 /* ---------- narrow phones ---------- */
 
 @media (max-width: 374px) {
-  .iconbtn { width: 40px; height: 40px; font-size: 14px; }
+  .iconbtn { width: 42px; height: 42px; font-size: 14px; }
+  #hudButtons { gap: 3px; }
   .stat { font-size: 14px; }
   .overlay h1 { font-size: 38px; }
 }
 
 @media (max-height: 680px) {
-  :root { --palette-h: 84px; --hud-h: 52px; --action-h: 50px; }
+  :root { --palette-h: 84px; --hud-h: 52px; --action-h: 52px; }
+  #actionRow { padding: 5px var(--pad); }
+  #stats { grid-template-rows: 20px 20px; }
+  .stat { font-size: 14px; line-height: 20px; }
   .overlay h1 { font-size: 34px; }
-  .bigbtn { min-height: 56px; }
+  .overlay h2 { font-size: 23px; }
+  .bigbtn { min-height: 56px; font-size: 18px; }
+}
+
+/* Landscape on a phone: keep the portrait column, give the board what is left. */
+@media (max-height: 470px) {
+  :root { --palette-h: 66px; --hud-h: 46px; --strip-h: 26px; --action-h: 46px; --pad: 6px; }
+  #actionRow { padding: 3px var(--pad); }
+  .iconbtn { width: 40px; height: 40px; font-size: 13px; }
+  #stats { grid-template-rows: 19px 19px; }
+  .stat { font-size: 13px; line-height: 19px; }
+  .pbtn .pname { font-size: 9px; }
+  .picon { width: 22px; height: 22px; }
+  .overlay { gap: 8px; padding: 12px; }
+  .overlay h1 { font-size: 26px; }
+  .overlay h2 { font-size: 19px; }
+  .overlay .row { font-size: 12px; padding: 6px 8px; }
+  .bigbtn { min-height: 46px; font-size: 15px; min-width: 170px; }
+  .bigbtn.ghost { min-height: 40px; font-size: 13px; }
 }
 </style>
 </head>
@@ -876,7 +898,7 @@ body.wide #sideNote { display: block; }
     ACTION_H: 56,
     PALETTE_H: 96,
     MIN_CELL: 26,
-    COLUMN_ASPECT: 0.5
+    COLUMN_ASPECT: 0.56
   };
 
   R.TIMING = {

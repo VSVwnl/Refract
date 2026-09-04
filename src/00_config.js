@@ -147,7 +147,7 @@
     ACTION_H: 56,
     PALETTE_H: 96,
     MIN_CELL: 26,
-    COLUMN_ASPECT: 0.5
+    COLUMN_ASPECT: 0.56
   };
 
   R.TIMING = {

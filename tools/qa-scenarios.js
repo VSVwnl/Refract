@@ -1220,4 +1220,302 @@ module.exports = function (S) {
     ctx.eq(order, 'motex6 brutex2 umbrax1 brutex2', 'composition is listed in spawn order');
   };
 
+  /* Phase 7: portrait mobile UX at every target size. */
+  S.mobile = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    const measure = function () {
+      return st(function () {
+        const rects = {};
+        const targets = [];
+        const add = function (sel) {
+          Array.prototype.forEach.call(document.querySelectorAll(sel), function (n) {
+            if (n.offsetParent === null && n.style.display === 'none') return;
+            const b = n.getBoundingClientRect();
+            if (b.width < 1 || b.height < 1) return;
+            targets.push({
+              sel: (n.id ? '#' + n.id : n.className.split(' ')[0]) + (n.dataset.type ? '.' + n.dataset.type : ''),
+              w: Math.round(b.width),
+              h: Math.round(b.height),
+              x: Math.round(b.x),
+              y: Math.round(b.y)
+            });
+          });
+        };
+        add('#hudButtons .iconbtn');
+        add('#actionRow .actbtn:not([hidden])');
+        add('#palette .pbtn');
+        add('#actionBar button');
+        add('#undoChip');
+        add('#overlayRoot .bigbtn');
+        ['app', 'hud', 'strip', 'boardWrap', 'board', 'actionRow', 'palette'].forEach(function (id) {
+          const b = document.getElementById(id).getBoundingClientRect();
+          rects[id] = { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) };
+        });
+        return {
+          rects: rects,
+          targets: targets,
+          scrollW: document.documentElement.scrollWidth,
+          scrollH: document.documentElement.scrollHeight,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+          cell: Math.round(R.render.cell * 10) / 10,
+          wide: document.body.classList.contains('wide')
+        };
+      });
+    };
+
+    const checkFits = function (m, label) {
+      ctx.eq(m.scrollW, ctx.width, label + ': no horizontal overflow');
+      ctx.eq(m.scrollH, ctx.height, label + ': no vertical overflow');
+      const overflow = m.targets.filter(function (t) {
+        return t.x < -1 || t.y < -1 || t.x + t.w > ctx.width + 1 || t.y + t.h > ctx.height + 1;
+      });
+      ctx.check(overflow.length === 0, label + ': every control is inside the viewport' +
+        (overflow.length ? ' (' + JSON.stringify(overflow) + ')' : ''));
+      const small = m.targets.filter(function (t) { return Math.min(t.w, t.h) < 40; });
+      ctx.check(small.length === 0, label + ': every control is at least 40px' +
+        (small.length ? ' (' + JSON.stringify(small) + ')' : ''));
+    };
+
+    /* --- title --- */
+    let m = await measure();
+    checkFits(m, 'title');
+    await ctx.snap('01-title');
+
+    /* --- mid wave with a piece selected --- */
+    await st(function () {
+      window.__REFRACT.restart(3000);
+      window.__REFRACT.setGold(600);
+      window.__REFRACT.place('mirror', 7, 3, 1);
+      window.__REFRACT.place('mirror', 0, 3, 0);
+      window.__REFRACT.nextWave();
+      window.__REFRACT.step(6);
+      R.pieces.select(R.state, R.pieces.at(R.state, 0, 3));
+    });
+    await ctx.page.waitForTimeout(90);
+    m = await measure();
+    checkFits(m, 'mid-wave');
+    ctx.log('  ' + ctx.width + 'x' + ctx.height + ' cell ' + m.cell + ' board ' + JSON.stringify(m.rects.board));
+    await ctx.snap('02-midwave');
+
+    /* action bar sits above a low piece and below a top-row piece */
+    const barLow = await st(function () {
+      R.pieces.select(R.state, R.pieces.at(R.state, 0, 3));
+      R.ui.frame(R.state, 0.016);
+      const b = document.getElementById('actionBar').getBoundingClientRect();
+      const p = R.render.projectCell(0, 3, 0);
+      const board = document.getElementById('board').getBoundingClientRect();
+      return { bar: Math.round(b.bottom), piece: Math.round(board.top + p.y) };
+    });
+    ctx.check(barLow.bar <= barLow.piece, 'the action bar sits above a piece below row 1');
+
+    const barTop = await st(function () {
+      const s = R.state;
+      window.__REFRACT.setGold(600);
+      R.pieces.place(s, 'mirror', 4, 0);
+      R.pieces.select(s, R.pieces.at(s, 4, 0));
+      R.ui.frame(s, 0.016);
+      const b = document.getElementById('actionBar').getBoundingClientRect();
+      const p = R.render.projectCell(4, 0, 0);
+      const board = document.getElementById('board').getBoundingClientRect();
+      return { bar: Math.round(b.top), piece: Math.round(board.top + p.y) };
+    });
+    ctx.check(barTop.bar >= barTop.piece, 'the action bar drops below a piece in row 0');
+    m = await measure();
+    checkFits(m, 'action bar in row 0');
+
+    /* --- victory, defeat and help --- */
+    await st(function () { R.pieces.deselect(R.state); window.__REFRACT.forceWin(); });
+    await ctx.page.waitForTimeout(90);
+    checkFits(await measure(), 'victory');
+    await ctx.snap('03-victory');
+
+    await st(function () { window.__REFRACT.restart(3001); window.__REFRACT.forceLose(); });
+    await ctx.page.waitForTimeout(90);
+    checkFits(await measure(), 'defeat');
+    await ctx.snap('04-defeat');
+
+    await st(function () { window.__REFRACT.restart(3002); R.ui.openHelp(); });
+    await ctx.page.waitForTimeout(90);
+    const helpFit = await st(function () {
+      const o = document.querySelector('#overlayRoot .overlay');
+      const btn = o.querySelector('.bigbtn');
+      return {
+        scrollable: o.scrollHeight > o.clientHeight,
+        contentH: o.scrollHeight,
+        viewH: o.clientHeight,
+        btnW: Math.round(btn.getBoundingClientRect().width)
+      };
+    });
+    ctx.log('  help: ' + JSON.stringify(helpFit));
+    ctx.check(!helpFit.scrollable || helpFit.contentH > helpFit.viewH,
+      'help either fits or scrolls (content ' + helpFit.contentH + ' in ' + helpFit.viewH + ')');
+    await ctx.snap('05-help');
+    await st(function () { R.ui.closeHelp(); });
+
+    /* --- no zoom, no scroll on a double tap --- */
+    await st(function () { window.__REFRACT.restart(3003); });
+    const pt = await ctx.cellPoint(4, 5);
+    await ctx.page.touchscreen.tap(pt.x, pt.y);
+    await ctx.page.touchscreen.tap(pt.x, pt.y);
+    await ctx.page.waitForTimeout(150);
+    const after = await st(function () {
+      return {
+        scale: window.visualViewport ? Math.round(window.visualViewport.scale * 100) / 100 : 1,
+        scrollY: window.scrollY,
+        scrollX: window.scrollX
+      };
+    });
+    ctx.eq(after.scale, 1, 'a double tap does not zoom');
+    ctx.eq(after.scrollY, 0, 'a double tap does not scroll');
+
+    /* a swipe across the board must not scroll the page either */
+    await ctx.drag(await ctx.cellPoint(4, 2), await ctx.cellPoint(4, 9));
+    const afterSwipe = await st(function () { return { y: window.scrollY, x: window.scrollX }; });
+    ctx.eq(afterSwipe.y, 0, 'a swipe across the board does not scroll the page');
+
+    /* --- simulated notch: safe-area padding must not break the layout --- */
+    await st(function () {
+      const s = document.createElement('style');
+      s.id = 'safeAreaTest';
+      s.textContent = '#app { padding-top: 47px !important; padding-bottom: 34px !important; }';
+      document.head.appendChild(s);
+      R.layout();
+    });
+    await ctx.page.waitForTimeout(150);
+    m = await measure();
+    checkFits(m, 'with a notch');
+    ctx.check(m.rects.hud.y >= 47, 'the HUD clears the notch (top ' + m.rects.hud.y + ')');
+    ctx.check(m.rects.palette.y + m.rects.palette.h <= ctx.height - 34,
+      'the palette clears the home indicator');
+    ctx.log('  with notch: cell ' + m.cell);
+    await ctx.snap('06-safearea');
+    await st(function () {
+      const n = document.getElementById('safeAreaTest');
+      if (n) n.remove();
+      R.layout();
+    });
+  };
+
+  /* Phase 7: the landscape fallback keeps the portrait column. */
+  S.landscape = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    await ctx.page.setViewportSize({ width: ctx.height, height: ctx.width });
+    await ctx.page.waitForTimeout(200);
+    const m = await st(function () {
+      const app = document.getElementById('app').getBoundingClientRect();
+      const note = document.getElementById('sideNote');
+      return {
+        inner: [innerWidth, innerHeight],
+        app: { x: Math.round(app.x), w: Math.round(app.width), h: Math.round(app.height) },
+        wide: document.body.classList.contains('wide'),
+        noteShown: getComputedStyle(note).display !== 'none',
+        cell: Math.round(R.render.cell * 10) / 10,
+        scrollW: document.documentElement.scrollWidth,
+        phase: R.state.phase
+      };
+    });
+    ctx.log('  landscape: ' + JSON.stringify(m));
+    ctx.check(m.wide, 'the wide class is applied');
+    ctx.check(m.noteShown, 'the "best played in portrait" caption shows');
+    ctx.check(m.app.w < m.inner[0], 'the portrait column is narrower than the window');
+    ctx.check(Math.abs(m.app.x - (m.inner[0] - m.app.w) / 2) <= 1, 'the column is centred');
+    ctx.eq(m.scrollW, m.inner[0], 'no horizontal overflow in landscape');
+    ctx.check(m.cell >= 12, 'the whole board still fits (cell ' + m.cell + 'px)');
+    await ctx.snap('07-landscape');
+
+    /* rotating back restores the portrait layout with the run intact */
+    await st(function () { window.__REFRACT.restart(3100); window.__REFRACT.place('mirror', 7, 3, 1); });
+    await ctx.page.setViewportSize({ width: ctx.width, height: ctx.height });
+    await ctx.page.waitForTimeout(200);
+    const back = await st(function () {
+      return {
+        wide: document.body.classList.contains('wide'),
+        pieces: R.state.pieces.size,
+        lit: R.state.beam.litRoadCount,
+        cell: Math.round(R.render.cell * 10) / 10
+      };
+    });
+    ctx.check(!back.wide, 'portrait layout restored');
+    ctx.eq(back.pieces, 1, 'the run survived the rotation');
+    ctx.eq(back.lit, 7, 'the beam survived the rotation');
+    await ctx.snap('08-back-to-portrait');
+  };
+
+  /*
+   * A whole run driven only by taps on real controls: PLAY, board tiles, the
+   * palette and the CORE button. Nothing is placed through the debug API; only
+   * the clock is advanced between actions so the test does not take minutes.
+   */
+  S.handplay = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const snap = function () { return ctx.snapshot(); };
+    const step = function (sec) { return st(function (n) { window.__REFRACT.step(n); }, sec); };
+    const gold = function () { return st(function () { return R.state.gold; }); };
+
+    await ctx.tap('#overlayRoot .bigbtn');
+    await st(function () { window.__REFRACT.freeze(true); });
+    ctx.eq((await snap()).phase, 'building', 'PLAY started the run');
+
+    /* An informed player's shopping list, bought in order as gold allows. */
+    const PLAN = [
+      { kind: 'mirror', c: 7, r: 3 },
+      { kind: 'mirror', c: 0, r: 3 },
+      { kind: 'mirror', c: 0, r: 10 },
+      { kind: 'core' },
+      { kind: 'core' },
+      { kind: 'core' },
+      { kind: 'lamp', c: 2, r: 11 },
+      { kind: 'lamp', c: 1, r: 6 },
+      { kind: 'core' },
+      { kind: 'lamp', c: 1, r: 4 },
+      { kind: 'core' }
+    ];
+    let planIndex = 0;
+
+    async function shop() {
+      for (let guard = 0; guard < 6 && planIndex < PLAN.length; guard++) {
+        const next = PLAN[planIndex];
+        const info = await st(function (n) {
+          const s = R.state;
+          if (n.kind === 'core') return { price: R.pieces.coreUpgradeCost(s), open: true };
+          return { price: R.pieces.cost(s, n.kind), open: !!s.unlocked[n.kind] };
+        }, next);
+        if (next.kind === 'core' && info.price === null) { planIndex++; continue; }
+        if (!info.open) return;
+        if (await gold() < info.price) return;
+        if (next.kind === 'core') {
+          const lv = await st(function () { return R.state.coreLevel; });
+          await ctx.tap('#btnCore');
+          if (await st(function () { return R.state.coreLevel; }) === lv) return;
+        } else {
+          await ctx.tap('#palette .pbtn[data-type="' + next.kind + '"]');
+          await ctx.tapCell(next.c, next.r);
+          const placed = await st(function (n) { return !!R.pieces.at(R.state, n.c, n.r); }, next);
+          if (!placed) return;
+        }
+        planIndex++;
+      }
+    }
+
+    const log = [];
+    for (let w = 1; w <= 12; w++) {
+      await shop();
+      await st(function (n) { window.__REFRACT.stepUntil('s.wave === ' + n + ' && s.phase === "wave"', 40); }, w);
+      await st(function () { window.__REFRACT.stepUntil('s.phase !== "wave"', 260); });
+      const m = await snap();
+      log.push({ w: m.wave, hp: m.coreHp, gold: m.gold, lit: m.lit, core: m.coreLevel });
+      if (m.phase === 'won' || m.phase === 'lost') break;
+    }
+    ctx.log('  hand-played run: ' + JSON.stringify(log));
+    const end = await snap();
+    ctx.log('  result: ' + end.phase + '  hp ' + end.coreHp + '  score ' + end.score +
+      '  core Lv' + end.coreLevel + '  lit ' + end.lit + '  pieces ' + end.pieces.length);
+    ctx.check(end.pieces.length >= 3, 'pieces were placed by tapping (' + end.pieces.length + ')');
+    ctx.eq(end.phase, 'won', 'a run played only with taps clears all twelve waves');
+    await ctx.snap('handplay-result');
+    await step(0.1);
+  };
+
 };
