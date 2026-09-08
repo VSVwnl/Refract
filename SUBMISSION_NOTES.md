@@ -7,14 +7,14 @@ Everything below is ready in `dist/`. No code needs touching.
 | Artifact | File | Notes |
 |---|---|---|
 | Build | `dist/refract.zip` | 0.19 MB. Contains `index.html` at the top level plus `vendor/three.min.js` and `vendor/LICENSE-three.txt`. Well under the 35 MB limit. |
-| Design intent | `dist/design-intent.docx` | 454 words of body text, 496 including the section headings. Seven sections in the required order. No names or identifying information. |
+| Design intent | `dist/design-intent.docx` | 461 words of body text, 495 including the section headings. Seven sections in the required order. No names or identifying information. |
 | Build log | `dist/buildlog.md` | Markdown, two parts: "Decisions locked so far" then one entry per phase. No names or identifying information. |
 
 ## What to select on the submission form
 
 - **Genre: Tower Defense & Strategy.**
 - Single player.
-- Deadline: **September 8, 2026, 1:00 PM PDT**. Resubmission before the deadline is allowed, so upload as soon as the form opens and replace it later if anything improves.
+- Deadline: **September 8, 2026, 1:00 PM PDT** — that is today. Resubmission before the deadline is allowed, so upload now and replace it later if anything improves.
 
 ## One thing to check by hand
 
@@ -33,6 +33,10 @@ Development server: `node tools/serve.js` then open `http://localhost:8080/`. Br
 
 ## What the judges will see
 
-Opening the zip's `index.html` from any static server shows a title card, and one tap starts a run. The beam is already firing when the board appears. A full run is twelve waves, roughly seven minutes at normal speed and half that at the 2x setting, ending in a victory or defeat screen with a score and a button to play again. Endless mode continues after a win.
+Opening the zip's `index.html` from any static server shows a title card, and one tap opens the planning phase with the beam already firing. Nothing advances until START WAVE is tapped, so a judge can look at the board for as long as they like without being punished for it.
+
+A full run is eight encounters, roughly five to six minutes at normal speed and half that at the 2x setting. It ends in a victory screen, a defeat screen for a spent core, or a distinct defeat screen naming the boss if Umbra reaches the core. Endless mode continues after a win.
+
+Two automated runs stand behind that: a tap-only playthrough of the packaged release build clears all eight encounters with 12 of 20 core HP, and a scripted suite of ten strategies has three winners, with a naive build reaching the boss and losing at 4 HP.
 
 The build makes exactly two requests — the page itself and `vendor/three.min.js` — and works with the network disabled and from a `file://` URL.
