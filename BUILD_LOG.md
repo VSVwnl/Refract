@@ -19,6 +19,7 @@ Design (locked in the design session before any code existed; see `MASTER_SPEC.m
 - Pieces: Mirror (90°), Splitter (pass + reflect at 50% each), Reflector (return at 60%), Lamp (second source at 50% of core power). Core levels 1–6.
 - Controls: tap palette → tap tile to place; tap piece → flip/move/sell; drag to move; undo within 3 s; portrait, touch-first, one active pointer.
 - Session: eight encounters, about 5 to 6 minutes at normal speed; win/lose/reset; endless after victory; score with best score.
+- Endless is a separate rule set and never touches the campaign: named encounters that always use both gates, a cap on body health so nothing becomes a sponge, temporary cuts through the road that are announced during planning and restored afterwards, a boss breach that hurts rather than ending the run, and a limit of five pieces the core will power at once.
 - Planning is untimed. Combat is paused between encounters until the player taps START WAVE; there is no countdown and no reward for starting early. Moving, turning and selling pieces during planning is free and refunds the price paid; mid-combat a moved piece goes dark for 0.3 s and a sale returns the sell rate.
 - Enemies: Mote, Runner, Swarmling, Bulwark, Brute King, Umbra. Absorption (how much light a body removes from what continues past it) and shielding (how much damage is deflected when light meets the face it walks towards) are separate constants.
 - Umbra advances shielded, then drops the shield at 45 percent of the road for the rest of the walk. About 56 s on the road.
@@ -1198,4 +1199,73 @@ The map data is now a shared `trunk` plus a list of `mouths`, each with the cell
 - **No human playtesting.** Nothing in this log is a claim about how the game reads to someone new.
 - The second entrance is a side gate on a shared road, not two roads meeting near the core. Reasoning and measurements above.
 - Encounter 2's "demonstrate an improved route" and the 45-second shielded-formation lesson are carried by the existing hint and the encounter order, not by a scripted sequence.
+
+---
+
+## Session 7 - Endless
+
+**Goal:** Make endless stop going passive once the board is full, without touching the eight-wave campaign.
+
+### Why it went passive, measured first
+
+A strong static layout at core 6 was run from wave 9 with the old rules:
+
+- **Every endless wave used one gate.** `endlessGroups` never set a route, so the west gate did not exist in endless and a network covering the north road won for ever. This was the single biggest cause.
+- **Waves 9, 10, 11, 13 and 14 cost zero HP.** The only damage in twelve waves came from Brute King breaches, which under the campaign rule ended the run outright. So endless was a flat line followed by a cliff, not a curve.
+- **Gold piled up unspent** - 2111 by wave 15 - because the board was already as full as it needed to be.
+- Scaling was linear unbounded health plus a small speed ramp, which is the "takes longer to kill" failure the brief rules out.
+
+### What was built
+
+*Named encounters, both gates.* Five endless encounters cycle in a fixed order so they can be learned: SPLIT MARCH (both gates at once), SHIELD WALL (a column of shields all facing the way they walk), SWARM TIDE (packed tightly enough to drink the beam), RUNNER BREAK (barely in the light), VANGUARD (a Brute King, escorted). Each has a name and one line saying what it wants, both shown in the strip during planning. Every endless encounter now uses both gates - verified for ten consecutive waves.
+
+*Health stops climbing.* `hpMult` is capped in endless at x2.2 and only there; the campaign curve is untouched. What grows instead is shape: shields per wall, bodies per tide, and spacing down to a floor.
+
+*A boss breach no longer ends endless.* The campaign is won by destroying Umbra, so a boss reaching the core ends that run. Endless has no victory to protect, so a Brute King that gets through lands its heavy hit and the run continues. That alone turned the ending from a cliff into a curve.
+
+*Temporary cuts.* Three authored cuts run from one point on the road to another through cells the sweeps do not use. One opens every third wave from wave 11, lasts two waves, and is then removed and the road restored. They are chosen and drawn during planning and never change while bodies are walking. A cut is only ever offered when every cell it needs is empty, so nothing bought is displaced or destroyed. While one is open, 60% of the encounter walks it. The strip names it and says how many waves it has left.
+
+*A limit on powered pieces.* Endless powers five pieces at once. Pieces past the limit are not sold or removed - they go idle, keep their place and their price, are drawn faint, and can be swapped in and out during planning for nothing. Placing a sixth is refused with a reason.
+
+### Why the piece limit was added
+
+The brief made it conditional on playtesting showing that filling the board still removes meaningful choices. It did:
+
+- A seven-piece board at core 6 lit **30 of 32 road cells**, with every route at 78% exposure or better.
+- Ten consecutive endless waves cost zero HP against 40 to 70 bodies each.
+- With coverage that complete, a cut removed only 18% of a route's exposure, so there was nothing for a reroute to fix.
+
+At five powered pieces the board lights meaningfully less and the choice of which five is a real one.
+
+### What did not work, and is not claimed
+
+**The cuts do not yet demonstrably reward rerouting, and I could not make them.** The test is honest and it failed:
+
+- A static layout and an adapting player were run from wave 9 with the same build, the same core level and the same upgrades. The adapting player was not a hand-written script but a search: at every planning phase it weighted each road by the traffic the next encounter sends down it, then tried every single swap available - idle a powered piece, wake an idle one, or buy one more - and kept anything that improved weighted light on the roads that mattered.
+- It found **no improvement at all**. Both reached wave 20 with identical per-wave HP. Spending 380 gold on rerouting bought nothing.
+- Three cut geometries were tried, including one that bypasses a whole sweep. Measured exposure on the cut route was 82%, 82% and 53% of the normal route.
+- Routing 60% of every encounter down the cut instead of half of one group did not change the result either.
+
+The likely cause is that lamps are independent sources covering the west side broadly, so any road down that side is already lit whatever route it takes. Fixing it properly needs cut geometry on the side of the board lamps do not reach, or a change to how lamps spread, and neither is something to attempt against a deadline.
+
+So the cuts ship as what they are and what is verified: announced, previewed, temporary, safe for purchased pieces, and a source of variety and pressure. They are not claimed to create a rerouting decision, because the measurement says they do not.
+
+**Also tried and reverted:** raising the endless speed ramp to 0.09/wave with a 2.2 cap and pushing counts to +3/wave. That produced a wave that took 20 HP in one go while the six before it took none - a worse curve, not a better one. Shield counts were capped at 6 and a Brute King is no longer added on top of a SHIELD WALL, so one hard idea arrives at a time.
+
+### The campaign is untouched, and it is checked
+
+A fingerprint of the campaign was taken before any of this work and compared after: the map and its kind array, road cell count, both roads cell by cell, every tuning constant, all eight wave queues with types, timings and gates, threat notes, health and speed multipliers, and a full scripted eight-wave run recording HP and elapsed time per wave. **The two are byte-identical.** The `endless` scenario also asserts in the browser that every campaign wave runs at normal speed and that the campaign has no piece limit.
+
+### Evidence
+
+- 26 Node tests pass. `build.js && check.js` pass on the release build.
+- All 24 browser scenarios pass at 390x844, including a new `endless` scenario with 63 checks: campaign untouched, encounter names and notes, both gates used every wave, the health cap reached and not exceeded, each encounter shape distinct, cuts opening on schedule and closing again, a cut refused when its cells are built on, the piece limit idling rather than selling, swapping being free and refused past the limit, and a boss breach hurting without ending the run.
+- Endless with a strong static layout now degrades 20 to 14 to 10 to 4 to 0 across waves 9 to 20, instead of flat-then-cliff.
+- Screenshots at 360x640 checked by eye: the cut is named with its remaining waves, idle pieces are visibly faint, and the strip carries POWERED n/5.
+- One mobile defect found and fixed on the way: the hint and the undo chip sat on the same spot at 360x640 and overlapped. The hint now steps up while the chip is showing.
+
+### Still not done
+
+- The cuts' rerouting payoff, above.
+- No unfamiliar player has tried any of this.
 

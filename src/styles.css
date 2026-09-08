@@ -452,6 +452,9 @@ body.wide #sideNote { display: block; }
 
 .banner.sub { font-size: 15px; letter-spacing: 0.08em; color: var(--gold); top: 42%; }
 
+/* Lifted clear of the undo chip while that is on screen. */
+.hint.raised { bottom: 60px; }
+
 .hint {
   position: absolute;
   left: 50%;

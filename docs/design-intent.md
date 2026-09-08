@@ -18,7 +18,7 @@ Read the formation named above the board, note which gate it uses, route the bea
 
 ## 5. What is in this prototype
 
-One map with two entrances; four piece types; a six-level core; six run upgrades; six threats including a boss; eight encounters plus endless; hints and help; score and best score; synthesized audio; one offline build. Not included: extra maps, meta-progression, difficulty options.
+One map with two entrances; four piece types; a six-level core; six run upgrades; six threats including a boss; eight encounters plus a named endless mode with temporary road cuts; hints and help; best score; synthesized audio; one offline build. Not included: extra maps, meta-progression, difficulty options.
 
 ## 6. Progression and signature twist
 

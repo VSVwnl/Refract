@@ -973,7 +973,9 @@ module.exports = function (S) {
     ctx.eq(endless[0].speed, await st(function () {
       return Math.round(R.enemies.speedMult(R.BALANCE.WAVES.length + 1) * 100) / 100;
     }), 'endless speeds up one step past the last beat');
-    ctx.eq(await st(function () { return R.enemies.speedMult(200); }), 1.5, 'the speed multiplier is capped at 1.5');
+    ctx.eq(await st(function () { return R.enemies.speedMult(200); }),
+      await st(function () { return R.BALANCE.ENDLESS.SPEED_CAP; }),
+      'the speed multiplier stops at the cap rather than climbing for ever');
 
     /* --- a real victory over all twelve waves --- */
     const build = [
@@ -3800,6 +3802,234 @@ module.exports = function (S) {
     });
     ctx.check(again.fresh, 'a new run points at a tile again');
     ctx.eq(again.later, null, 'but it never comes back mid-run');
+  };
+
+
+  /*
+   * Endless: named encounters that use both gates, temporary cuts that are
+   * announced during planning and never move while a wave is running, and the
+   * limit on how many pieces the core will power. The campaign is checked here
+   * too, because none of this may touch it.
+   */
+  S.endless = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    /* --- the campaign is untouched --- */
+    const campaign = await st(function () {
+      const out = [];
+      for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
+        const q = R.enemies.buildQueue(w);
+        out.push({
+          w: w, n: q.length,
+          routes: R.enemies.routesFor(w).join('+'),
+          hp: Math.round(R.enemies.hpMult(w) * 1000) / 1000,
+          speed: R.enemies.speedMult(w)
+        });
+      }
+      return out;
+    });
+    ctx.log('  campaign: ' + JSON.stringify(campaign));
+    campaign.forEach(function (w) {
+      ctx.eq(w.speed, 1, 'campaign wave ' + w.w + ' runs at normal speed');
+    });
+    ctx.eq(campaign[0].n, 5, 'the opening encounter is still five bodies');
+    ctx.eq(campaign[campaign.length - 1].routes, '0+1', 'the last encounter still uses both gates');
+    ctx.eq(await st(function () { return R.pieces.limit(R.state); }), Infinity,
+      'and the campaign powers as many pieces as the player can afford');
+
+    /* --- endless encounters are named, and use both gates --- */
+    const waves = await st(function () {
+      const first = R.BALANCE.WAVES.length + 1;
+      const out = [];
+      for (let w = first; w < first + 10; w++) {
+        const q = R.enemies.buildQueue(w);
+        const routes = {};
+        const counts = {};
+        q.forEach(function (x) {
+          routes[x.route || 0] = (routes[x.route || 0] || 0) + 1;
+          counts[x.type] = (counts[x.type] || 0) + 1;
+        });
+        out.push({
+          w: w, n: q.length,
+          name: R.enemies.endlessEncounter(w).name,
+          note: R.enemies.endlessEncounter(w).note,
+          routes: Object.keys(routes).join('+'),
+          counts: counts,
+          hp: Math.round(R.enemies.hpMult(w) * 100) / 100
+        });
+      }
+      return out;
+    });
+    waves.forEach(function (w) {
+      ctx.log('  ' + w.w + ' ' + w.name.padEnd(13) + ' n=' + String(w.n).padStart(2) +
+        ' roads ' + w.routes.padEnd(5) + ' hp x' + w.hp + '  ' + JSON.stringify(w.counts));
+    });
+
+    ctx.check(waves.every(function (w) { return w.name && w.note; }),
+      'every endless encounter has a name and a line saying what it wants');
+    ctx.check(waves.every(function (w) { return w.routes.indexOf('+') > 0; }),
+      'every endless encounter uses both gates');
+    ctx.check(new Set(waves.map(function (w) { return w.name; })).size >= 5,
+      'and they are not all the same encounter');
+
+    /* Bodies stop getting tougher, so none becomes a wall that is slow to remove. */
+    const cap = await st(function () { return R.BALANCE.ENDLESS.HP_MULT_CAP; });
+    ctx.check(waves.every(function (w) { return w.hp <= cap + 0.001; }),
+      'endless health stops climbing at the cap of x' + cap);
+    ctx.eq(waves[waves.length - 1].hp, cap, 'and it is reached rather than merely approached');
+
+    /* Each shape actually differs in what it sends. */
+    const byName = {};
+    waves.forEach(function (w) { byName[w.name] = byName[w.name] || w; });
+    ctx.check((byName['SHIELD WALL'].counts.bulwark || 0) >= 4,
+      'the shield wall is mostly shields (' + byName['SHIELD WALL'].counts.bulwark + ')');
+    ctx.check((byName['SWARM TIDE'].counts.swarmling || 0) >= 20,
+      'the swarm tide is a dense pack (' + byName['SWARM TIDE'].counts.swarmling + ')');
+    ctx.check((byName['RUNNER BREAK'].counts.runner || 0) >= 12,
+      'the runner break is mostly runners (' + byName['RUNNER BREAK'].counts.runner + ')');
+
+    /* --- cuts --- */
+    const cut = await st(function () {
+      window.__REFRACT.restart(9100);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.gold = 4000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      s.endless = true;
+      s.wave = R.BALANCE.WAVES.length;
+      s.routesOpen = s.routes.length;
+
+      const seen = [];
+      for (let i = 0; i < 12; i++) {
+        R.refreshCut(s);
+        R.ui.frame(s, 0.016);
+        seen.push({
+          before: s.wave + 1,
+          cut: s.cut ? s.cut.name : null,
+          left: s.cut ? s.cut.wavesLeft : 0,
+          roads: s.routes.length,
+          roadCells: s.roadCells,
+          strip: document.getElementById('strip').textContent.replace(/\s+/g, ' ').trim()
+        });
+        s.wave++;
+      }
+      return seen;
+    });
+    cut.forEach(function (c) { ctx.log('  before ' + c.before + ': ' + (c.cut || '-') + '  roads ' + c.roads + '  ' + c.strip); });
+
+    const open = cut.filter(function (c) { return c.cut; });
+    ctx.check(open.length > 0, 'cuts do open in endless');
+    ctx.check(open.length < cut.length, 'and the road is whole again in between');
+    ctx.check(new Set(open.map(function (c) { return c.cut; })).size >= 2,
+      'more than one cut is used across a run');
+    open.forEach(function (c) {
+      ctx.check(/OPEN/i.test(c.strip) && c.strip.toUpperCase().indexOf(c.cut.toUpperCase()) >= 0,
+        'an open cut is named while planning: ' + c.strip);
+      ctx.check(/\d+\s*waves?/i.test(c.strip), 'and says how long it lasts: ' + c.strip);
+      ctx.eq(c.roads, 3, 'the cut is an extra road while it is open');
+    });
+    cut.filter(function (c) { return !c.cut; }).forEach(function (c) {
+      ctx.eq(c.roads, 2, 'and is gone again afterwards');
+    });
+    await ctx.snap('a-cut-open');
+
+    /* A cut never disturbs a piece that has been paid for. */
+    const safe = await st(function () {
+      window.__REFRACT.restart(9101);
+      const s = R.state;
+      s.gold = 4000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      /* Sit a piece on every cell every cut needs, before the limit applies. */
+      const cells = [];
+      R.MAP.cuts.forEach(function (c) { c.cells.forEach(function (x) { cells.push(x); }); });
+      cells.forEach(function (x) { R.pieces.place(s, 'mirror', x[0], x[1]); });
+      const before = s.pieces.size;
+      s.endless = true;
+      const available = R.cutsAvailable(s).length;
+      s.wave = R.BALANCE.WAVES.length + 2;
+      R.refreshCut(s);
+      return { before: before, after: s.pieces.size, available: available, cut: s.cut };
+    });
+    ctx.log('  with every cut cell built on: ' + JSON.stringify(safe));
+    ctx.eq(safe.available, 0, 'a cut whose cells are built on is not offered');
+    ctx.eq(safe.cut, null, 'so none opens');
+    ctx.eq(safe.after, safe.before, 'and nothing the player paid for is touched');
+
+    /* --- the powered-piece limit --- */
+    const limit = await st(function () {
+      window.__REFRACT.restart(9102);
+      const s = R.state;
+      s.gold = 100000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      const build = [[7, 4], [0, 6], [0, 8], [0, 2], [6, 2], [0, 4], [0, 10]];
+      build.forEach(function (c) { R.pieces.place(s, 'mirror', c[0], c[1]); });
+      const campaignLit = s.beam.litRoadCount;
+      const campaignLimit = R.pieces.limit(s);
+      s.endless = true;
+      const idled = R.pieces.applyLimit(s);
+      return {
+        placed: s.pieces.size,
+        campaignLit: campaignLit,
+        campaignLimit: campaignLimit,
+        idled: idled,
+        active: R.pieces.activeCount(s),
+        endlessLit: s.beam.litRoadCount,
+        limit: R.pieces.limit(s)
+      };
+    });
+    ctx.log('  limit: ' + JSON.stringify(limit));
+    ctx.eq(limit.campaignLimit, Infinity, 'the campaign has no limit');
+    ctx.eq(limit.active, limit.limit, 'endless powers exactly the limit');
+    ctx.eq(limit.placed, 7, 'and nothing is sold or destroyed to get there');
+    ctx.check(limit.endlessLit < limit.campaignLit,
+      'a limited board lights less road (' + limit.campaignLit + ' to ' + limit.endlessLit + ')');
+
+    /* Swapping which pieces are awake is free, and refused past the limit. */
+    const swap = await st(function () {
+      const s = R.state;
+      const all = [];
+      const it = s.pieces.values();
+      let e = it.next();
+      while (!e.done) { all.push(e.value); e = it.next(); }
+      const awake = all.filter(function (p) { return !p.idle; });
+      const asleep = all.filter(function (p) { return p.idle; });
+      const gold = s.gold;
+      const refusedWhenFull = R.pieces.setIdle(s, asleep[0], false);
+      R.pieces.setIdle(s, awake[0], true);
+      const allowedAfterFreeing = R.pieces.setIdle(s, asleep[0], false);
+      return {
+        refusedWhenFull: refusedWhenFull,
+        allowedAfterFreeing: allowedAfterFreeing,
+        goldUnchanged: s.gold === gold,
+        active: R.pieces.activeCount(s),
+        placementRefused: R.pieces.placementProblem(s, 'mirror', 3, 3)
+      };
+    });
+    ctx.log('  swapping: ' + JSON.stringify(swap));
+    ctx.eq(swap.refusedWhenFull, false, 'a piece cannot be woken while the core is full');
+    ctx.eq(swap.allowedAfterFreeing, true, 'but it can once another is idled');
+    ctx.eq(swap.goldUnchanged, true, 'and swapping during planning costs nothing');
+    ctx.eq(swap.active, limit.limit, 'the limit still holds afterwards');
+    ctx.eq(swap.placementRefused, 'limit', 'buying another is refused with a reason');
+    await ctx.snap('b-limit-idle-pieces');
+
+    /* A boss that gets through endless hurts, but does not end the run. */
+    const boss = await st(function () {
+      window.__REFRACT.restart(9103);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.endless = true;
+      s.wave = R.BALANCE.WAVES.length + 1;
+      const e = R.enemies.spawn(s, 'bruteking', 0);
+      e.t = R.enemies.endOf(s, 0) - 0.1;
+      R.enemies.positionOf(s, e);
+      window.__REFRACT.step(1);
+      return { hp: s.coreHp, phase: s.phase, breached: s.bossBreached };
+    });
+    ctx.log('  a boss reaching the core in endless: ' + JSON.stringify(boss));
+    ctx.check(boss.hp < 20, 'it lands a heavy hit (core at ' + boss.hp + ')');
+    ctx.eq(boss.breached, null, 'but endless does not end on the breach rule');
+    ctx.check(boss.phase !== 'lost' || boss.hp <= 0, 'so the run continues while the core stands');
   };
 
 };

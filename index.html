@@ -479,6 +479,9 @@ body.wide #sideNote { display: block; }
 
 .banner.sub { font-size: 15px; letter-spacing: 0.08em; color: var(--gold); top: 42%; }
 
+/* Lifted clear of the undo chip while that is on screen. */
+.hint.raised { bottom: 60px; }
+
 .hint {
   position: absolute;
   left: 50%;
@@ -1014,7 +1017,56 @@ body.wide #sideNote { display: block; }
         split: 0.6
       }
     },
-    ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
+    /*
+     * Endless. The campaign above is untouched by any of this.
+     *
+     * Bodies stop getting tougher at HP_MULT_CAP, so nothing ever becomes a
+     * thing that simply takes longer to kill. What escalates instead is the
+     * shape of each encounter: which gates it uses, how the shields face, and
+     * how tightly it packs. Encounters are named so the strip can say what is
+     * coming and what it wants, and they cycle in a fixed order so a player
+     * can learn them rather than guess.
+     */
+    ENDLESS: {
+      BASE_COUNT: 10,
+      COUNT_PER_WAVE: 2,
+      /* Shields per wall, swarm size and spacing, all growing with the wave. */
+      SHIELD_BASE: 3,
+      SHIELD_EVERY: 3,
+      SHIELD_CAP: 6,
+      SWARM_BASE: 12,
+      SWARM_EVERY: 2,
+      SWARM_CAP: 40,
+      SWARM_GAP: 0.16,
+      GAP_BASE: 0.7,
+      GAP_PER_WAVE: 0.02,
+      GAP_FLOOR: 0.22,
+      SPEED_PER_WAVE: 0.09,
+      SPEED_CAP: 2.2,
+      HP_MULT_CAP: 2.2,
+      KING_EVERY: 5,
+      /*
+       * How many pieces the core can power at once in endless. Measured: a
+       * seven-piece board lights 30 of 32 road cells, which decides every
+       * encounter before it starts and leaves the cuts nothing to bypass.
+       * Nothing is ever destroyed or taken away by this - pieces over the
+       * limit sit idle on the board and can be swapped in during planning.
+       */
+      ACTIVE_PIECES: 5,
+      /* A cut opens every few waves and stays for a stated number of them. */
+      /* How much of an encounter walks an open cut. */
+      CUT_SHARE: 0.6,
+      CUT_EVERY: 3,
+      CUT_WAVES: 2,
+      CUT_FROM_WAVE: 11,
+      ENCOUNTERS: [
+        { key: 'split', name: 'SPLIT MARCH', note: 'both gates at once' },
+        { key: 'wall', name: 'SHIELD WALL', note: 'a line of shields, facing you' },
+        { key: 'tide', name: 'SWARM TIDE', note: 'thick enough to drink the beam' },
+        { key: 'break', name: 'RUNNER BREAK', note: 'fast, and barely in the light' },
+        { key: 'vanguard', name: 'VANGUARD', note: 'a Brute King, escorted' }
+      ]
+    }
   };
 
   R.PIECE_TYPES = ['mirror', 'splitter', 'reflector', 'lamp'];
@@ -1058,6 +1110,24 @@ body.wide #sideNote { display: block; }
       [6, 9], [6, 10],
       [7, 10],
       [7, 11]
+    ],
+    /*
+     * Temporary cuts through the road, used only in endless. Each one runs
+     * from one trunk index to another through the listed cells, skipping
+     * everything between. A cut is only ever offered when its cells are empty,
+     * so it never disturbs a piece that has been paid for, and it is chosen
+     * and shown during planning, never while a wave is running.
+     */
+    cuts: [
+      /*
+       * Each cut leaves the road along a row the sweeps do not use, so a
+       * network built for the sweeps does not cover it. The deep cut skips a
+       * whole sweep and is the one that most demands an answer.
+       */
+      { name: 'the deep cut', from: 16, to: 23,
+        cells: [[1, 9], [1, 10], [2, 10], [3, 10], [4, 10], [5, 10]] },
+      { name: 'the long cut', from: 2, to: 14, cells: [[1, 5]] },
+      { name: 'the low cut', from: 11, to: 19, cells: [[4, 7]] }
     ],
     /*
      * Each mouth is the cells it adds, plus the index in the trunk it joins
@@ -1714,6 +1784,14 @@ body.wide #sideNote { display: block; }
       routes: board.routes,
       /* The road the player has been shown so far; the rest stay dark. */
       routesOpen: 1,
+      /*
+       * The temporary cut, when one is open: which of R.MAP.cuts it is, the
+       * route index the bodies using it walk, and how many more encounters it
+       * lasts. Null the rest of the time.
+       */
+      cut: null,
+      /* How many cuts this run has opened, so they come round in order. */
+      cutsOpened: 0,
       pieces: new Map(),
       nextPieceId: 1,
       routeVersion: 0,
@@ -1746,6 +1824,119 @@ body.wide #sideNote { display: block; }
     };
     s.rng = R.util.makeRng(s.rngSeed);
     return s;
+  };
+
+  /* ---------- temporary cuts through the road ---------- */
+
+  /*
+   * A cut is an extra road that leaves the north gate, skips a stretch of the
+   * middle, and rejoins. It exists only in endless, and only between waves:
+   * it is chosen and drawn during planning, holds still for the whole of the
+   * encounter that follows, and is taken away again afterwards. Nothing about
+   * the road ever changes while bodies are walking on it.
+   *
+   * A cut is only ever chosen when every cell it needs is empty, so a piece
+   * that has been paid for is never displaced or destroyed by one.
+   */
+  function cutCellsFree(s, def) {
+    for (var i = 0; i < def.cells.length; i++) {
+      var idx = R.grid.idx(def.cells[i][0], def.cells[i][1]);
+      if (s.grid.kind[idx] !== R.EMPTY) return false;
+      if (s.pieces.has(idx)) return false;
+    }
+    return true;
+  }
+
+  /* The road a cut walks: the north gate, the trunk to the cut, then on. */
+  function cutPath(s, def) {
+    var mouth = R.MAP.mouths[0];
+    var cells = mouth.lead
+      .concat(R.MAP.trunk.slice(mouth.join, def.from + 1))
+      .concat(def.cells)
+      .concat(R.MAP.trunk.slice(def.to));
+    var path = [];
+    for (var i = 0; i < cells.length; i++) {
+      path.push({ c: cells[i][0], r: cells[i][1], i: R.grid.idx(cells[i][0], cells[i][1]) });
+    }
+    return path;
+  }
+
+  R.cutsAvailable = function (s) {
+    if (!s.endless || !R.MAP.cuts) return [];
+    var out = [];
+    for (var i = 0; i < R.MAP.cuts.length; i++) {
+      if (cutCellsFree(s, R.MAP.cuts[i])) out.push(i);
+    }
+    return out;
+  };
+
+  R.openCut = function (s, index) {
+    var def = R.MAP.cuts[index];
+    if (!cutCellsFree(s, def)) return null;
+
+    for (var i = 0; i < def.cells.length; i++) {
+      s.grid.kind[R.grid.idx(def.cells[i][0], def.cells[i][1])] = R.ROAD;
+    }
+    var route = s.routes.length;
+    s.routes.push({ name: def.name, spawn: R.MAP.mouths[0].spawn.slice(), path: cutPath(s, def), cut: true });
+    s.routesOpen = s.routes.length;
+    s.roadCells = R.roadCellCount(s.grid.kind);
+    s.cutsOpened++;
+    s.cut = {
+      index: index,
+      name: def.name,
+      route: route,
+      wavesLeft: B.ENDLESS.CUT_WAVES,
+      skips: def.to - def.from - def.cells.length
+    };
+    R.beam.recompute(s);
+    R.emit(s, 'cutopen', { name: def.name, waves: s.cut.wavesLeft, skips: s.cut.skips });
+    return s.cut;
+  };
+
+  R.closeCut = function (s) {
+    if (!s.cut) return;
+    var def = R.MAP.cuts[s.cut.index];
+    for (var i = 0; i < def.cells.length; i++) {
+      s.grid.kind[R.grid.idx(def.cells[i][0], def.cells[i][1])] = R.EMPTY;
+    }
+    /* The cut is always the last road, so dropping it cannot renumber others. */
+    s.routes.length = s.cut.route;
+    s.routesOpen = Math.min(s.routesOpen, s.routes.length);
+    s.roadCells = R.roadCellCount(s.grid.kind);
+    var name = s.cut.name;
+    s.cut = null;
+    R.beam.recompute(s);
+    R.emit(s, 'cutclose', { name: name });
+  };
+
+  /*
+   * Between encounters: retire a cut that has run out, then consider opening
+   * one. Both happen in planning, so the board the player is looking at is the
+   * board the next encounter uses.
+   */
+  R.refreshCut = function (s) {
+    if (!s.endless) return;
+    var E = B.ENDLESS;
+
+    if (s.cut) {
+      s.cut.wavesLeft--;
+      if (s.cut.wavesLeft <= 0) R.closeCut(s);
+    }
+    if (s.cut) return;
+
+    var next = s.wave + 1;
+    if (next < E.CUT_FROM_WAVE) return;
+    if ((next - E.CUT_FROM_WAVE) % E.CUT_EVERY !== 0) return;
+
+    /*
+     * Cuts come round in a fixed order rather than at random, so a player can
+     * learn them, and so the game is never reacting to where they happened to
+     * build. Which one bypasses your network depends on where you built it.
+     */
+    var options = R.cutsAvailable(s);
+    if (!options.length) return;
+    R.openCut(s, options[s.cutsOpened % options.length]);
   };
 
   /* ---------- run upgrades ---------- */
@@ -2116,7 +2307,7 @@ body.wide #sideNote { display: block; }
       }
 
       var piece = pieces.get(i);
-      if (piece && piece.inactiveUntil > nowTime) piece = null;
+      if (piece && (piece.idle || piece.inactiveUntil > nowTime)) piece = null;
 
       if (piece) {
         var px = R.grid.worldX(c);
@@ -2213,7 +2404,7 @@ body.wide #sideNote { display: block; }
     var entry = it.next();
     while (!entry.done) {
       var p = entry.value;
-      if (p.type === 'lamp' && p.inactiveUntil <= nowTime) {
+      if (p.type === 'lamp' && !p.idle && p.inactiveUntil <= nowTime) {
         sourceId++;
         visitGen++;
         currentSourcePower = lampPower;
@@ -2395,8 +2586,16 @@ body.wide #sideNote { display: block; }
 
   /* ---------- wave data ---------- */
 
+  /*
+   * Bodies get tougher through the campaign and then stop. Past the cap an
+   * endless encounter is made harder by its shape rather than by handing the
+   * same body more health, so nothing ever turns into a wall that is merely
+   * slow to remove.
+   */
   en.hpMult = function (wave) {
-    return 1 + B.HP_MULT_PER_WAVE * (wave - 1);
+    var mult = 1 + B.HP_MULT_PER_WAVE * (wave - 1);
+    if (wave > B.WAVES.length) return Math.min(mult, B.ENDLESS.HP_MULT_CAP);
+    return mult;
   };
 
   en.speedMult = function (wave) {
@@ -2405,38 +2604,116 @@ body.wide #sideNote { display: block; }
     return Math.min(B.ENDLESS.SPEED_CAP, 1 + B.ENDLESS.SPEED_PER_WAVE * (wave - last));
   };
 
-  /* Endless waves rotate through four shapes and add a king every fifth wave. */
-  en.endlessGroups = function (wave) {
-    var count = B.ENDLESS.BASE_COUNT + wave;
-    var pattern = (wave - B.WAVES.length - 1) % 4;
+  /* ---------- endless ---------- */
+
+  /* Which endless encounter a wave is, as an index into the table. */
+  function endlessIndex(wave) {
+    var n = wave - B.WAVES.length - 1;
+    return ((n % B.ENDLESS.ENCOUNTERS.length) + B.ENDLESS.ENCOUNTERS.length) % B.ENDLESS.ENCOUNTERS.length;
+  }
+
+  en.endlessEncounter = function (wave) {
+    return B.ENDLESS.ENCOUNTERS[endlessIndex(wave)];
+  };
+
+  /*
+   * Endless encounters. Each one asks for a different shape of network:
+   *
+   *   split     both gates at once, so a single covered road is not enough
+   *   wall      a column of shields all facing the way they walk, which wants
+   *             light reaching a flank or a back rather than more of it
+   *   tide      bodies packed tightly enough that absorption eats the beam
+   *             before it reaches the back of the group
+   *   break     runners, who are only ever briefly in any one cell
+   *   vanguard  a Brute King with an escort, down whichever gate is quieter
+   *
+   * The cut, when one is open, always carries part of the pressure, so an
+   * encounter with a cut is never simply the same encounter again.
+   */
+  en.endlessGroups = function (wave, cutRoute) {
+    var E = B.ENDLESS;
+    var step = wave - B.WAVES.length;
+    var count = E.BASE_COUNT + Math.round(E.COUNT_PER_WAVE * step);
+    /*
+     * What grows with the wave is the shape of the pressure, not the health
+     * of any one body: more shields in a wall, more bodies in a tide, and
+     * tighter spacing, down to a floor so a group never becomes a single
+     * unreadable clump.
+     */
+    var shields = Math.min(E.SHIELD_CAP, E.SHIELD_BASE + Math.floor(step / E.SHIELD_EVERY));
+    var swarm = Math.min(E.SWARM_CAP, E.SWARM_BASE + Math.floor(step / E.SWARM_EVERY) * 4);
+    var gap = Math.max(E.GAP_FLOOR, E.GAP_BASE - E.GAP_PER_WAVE * step);
+    var kind = en.endlessEncounter(wave).key;
+    var cut = cutRoute === undefined ? -1 : cutRoute;
     var groups = [];
-    if (pattern === 0) {
-      groups.push(['mote', count, 0.6]);
-      groups.push(['runner', Math.ceil(count / 3), 0.5]);
-    } else if (pattern === 1) {
-      groups.push(['runner', count, 0.45]);
-      groups.push(['mote', Math.ceil(count / 3), 0.7]);
-    } else if (pattern === 2) {
-      groups.push(['swarmling', 8, 0.25]);
-      groups.push(['swarmling', 8, 0.25]);
-      groups.push(['swarmling', 8, 0.25]);
-      groups.push(['mote', Math.ceil(count / 2), 0.6]);
+
+    if (kind === 'split') {
+      var half = Math.ceil(count / 2);
+      groups.push(['mote', half, gap, 0]);
+      groups.push(['runner', Math.ceil(count / 3), gap * 0.8, 1]);
+      groups.push(['mote', half, gap, 1]);
+      groups.push(['bulwark', Math.max(1, shields - 2), gap * 2, 0]);
+    } else if (kind === 'wall') {
+      groups.push(['bulwark', shields, gap * 1.8, 0]);
+      groups.push(['bulwark', Math.max(1, shields - 1), gap * 1.8, 1]);
+      groups.push(['mote', Math.ceil(count / 2), gap, 0]);
+    } else if (kind === 'tide') {
+      groups.push(['swarmling', swarm, E.SWARM_GAP, 0]);
+      groups.push(['swarmling', swarm, E.SWARM_GAP, 1]);
+      groups.push(['bulwark', Math.max(1, shields - 2), gap * 2, 0]);
+      groups.push(['mote', Math.ceil(count / 2), gap, 1]);
+    } else if (kind === 'break') {
+      groups.push(['runner', count, gap * 0.6, 0]);
+      groups.push(['runner', Math.ceil(count / 2), gap * 0.6, 1]);
+      groups.push(['bulwark', Math.max(1, shields - 2), gap * 2, 0]);
+      groups.push(['mote', Math.ceil(count / 3), gap, 0]);
     } else {
-      groups.push(['bulwark', Math.max(2, Math.floor(count / 4)), 1.2]);
-      groups.push(['mote', count, 0.6]);
+      groups.push(['bruteking', 1, 0, 1]);
+      groups.push(['bulwark', Math.max(2, shields - 1), gap * 1.8, 0]);
+      groups.push(['runner', Math.ceil(count / 2), gap * 0.8, 1]);
+      groups.push(['mote', Math.ceil(count / 2), gap, 0]);
     }
-    if (wave % B.ENDLESS.KING_EVERY === 0) groups.unshift(['bruteking', 1, 0]);
+
+    /*
+     * A Brute King every so often, but never on top of an encounter that is
+     * already a wall of shields or its own vanguard: one hard idea at a time.
+     */
+    if (wave % E.KING_EVERY === 0 && kind !== 'vanguard' && kind !== 'wall') {
+      groups.unshift(['bruteking', 1, 0, 0]);
+    }
+
+    /*
+     * While a cut is open most of the encounter walks it. That is the whole
+     * point of a bypass: if only a handful took it, covering it would never be
+     * worth rearranging the network for, and the cut would be decoration.
+     */
+    if (cut >= 0) {
+      var moved = [];
+      for (var i = 0; i < groups.length; i++) {
+        var g = groups[i];
+        var take = Math.round(g[1] * E.CUT_SHARE);
+        if (take <= 0) continue;
+        g[1] -= take;
+        moved.push([g[0], take, g[2], cut]);
+      }
+      groups = groups.filter(function (g) { return g[1] > 0; }).concat(moved);
+    }
+
     return groups;
   };
 
-  en.groupsFor = function (wave) {
+  /*
+   * The campaign is read straight from the table. Only past it does the
+   * generator run, and only there can a cut be in play.
+   */
+  en.groupsFor = function (wave, cutRoute) {
     if (wave <= B.WAVES.length) return B.WAVES[wave - 1];
-    return en.endlessGroups(wave);
+    return en.endlessGroups(wave, cutRoute);
   };
 
   /* Flattened spawn schedule: one entry per enemy, in spawn order. */
-  en.buildQueue = function (wave) {
-    var groups = en.groupsFor(wave);
+  en.buildQueue = function (wave, cutRoute) {
+    var groups = en.groupsFor(wave, cutRoute);
     var queue = [];
     var t = 0;
     for (var g = 0; g < groups.length; g++) {
@@ -2459,8 +2736,8 @@ body.wide #sideNote { display: block; }
   };
 
   /* Which roads a wave uses, lowest first. */
-  en.routesFor = function (wave) {
-    var groups = en.groupsFor(wave);
+  en.routesFor = function (wave, cutRoute) {
+    var groups = en.groupsFor(wave, cutRoute);
     var seen = [];
     for (var g = 0; g < groups.length; g++) {
       var route = groups[g][3] || 0;
@@ -2471,8 +2748,8 @@ body.wide #sideNote { display: block; }
   };
 
   /* Composition summary for the incoming strip, in spawn order. */
-  en.composition = function (wave) {
-    var groups = en.groupsFor(wave);
+  en.composition = function (wave, cutRoute) {
+    var groups = en.groupsFor(wave, cutRoute);
     var out = [];
     for (var g = 0; g < groups.length; g++) {
       var last = out[out.length - 1];
@@ -2504,6 +2781,7 @@ body.wide #sideNote { display: block; }
   };
 
   en.threatNote = function (wave) {
+    if (wave > B.WAVES.length) return en.endlessEncounter(wave).note;
     var comp = en.composition(wave);
     var has = {};
     for (var i = 0; i < comp.length; i++) has[comp[i].type] = comp[i].count;
@@ -2732,10 +3010,13 @@ body.wide #sideNote { display: block; }
         s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;
         R.emit(s, 'leak', { enemy: e.type, leak: e.leak, x: e.x, z: e.z, id: e.id });
         /*
-         * A boss that arrives ends the run outright. Surviving the hit is not
-         * a win: the session is only won by destroying it on the road.
+         * In the campaign a boss that arrives ends the run outright, because
+         * the campaign is won by destroying Umbra rather than by outlasting
+         * it. Endless has no victory to protect, so a boss that gets through
+         * simply lands its own heavy hit and the run carries on. That keeps
+         * endless a curve the player can feel rather than a cliff.
          */
-        if (e.boss) {
+        if (e.boss && !s.endless) {
           s.bossBreached = e.type;
           R.emit(s, 'breach', { enemy: e.type, x: e.x, z: e.z, id: e.id });
         }
@@ -2796,8 +3077,79 @@ body.wide #sideNote { display: block; }
   };
 
   /*
+   * How many pieces the core can power at once. The campaign has no limit;
+   * endless has one, because a board with a piece on every useful cell
+   * decides every encounter before it starts.
+   */
+  R.pieces.limit = function (s) {
+    return s.endless ? B.ENDLESS.ACTIVE_PIECES : Infinity;
+  };
+
+  R.pieces.activeCount = function (s) {
+    var n = 0;
+    var it = s.pieces.values();
+    var e = it.next();
+    while (!e.done) {
+      if (!e.value.idle) n++;
+      e = it.next();
+    }
+    return n;
+  };
+
+  R.pieces.atLimit = function (s) {
+    return R.pieces.activeCount(s) >= R.pieces.limit(s);
+  };
+
+  /*
+   * Idle a piece, or wake it. Only during planning, and never past the limit.
+   * An idle piece keeps its place and its price; it is simply transparent to
+   * light until the player powers it again.
+   */
+  R.pieces.setIdle = function (s, piece, idle) {
+    if (!piece || !R.pieces.isPlanning(s)) return false;
+    if (!idle && R.pieces.atLimit(s)) {
+      R.emit(s, 'denied', { reason: 'limit', c: piece.c, r: piece.r, piece: piece.type });
+      return false;
+    }
+    if (piece.idle === !!idle) return true;
+    piece.idle = !!idle;
+    R.beam.recompute(s);
+    R.emit(s, 'idle', { id: piece.id, piece: piece.type, c: piece.c, r: piece.r, idle: piece.idle });
+    return true;
+  };
+
+  /*
+   * Entering endless can leave a board holding more than the core can power.
+   * Nothing is sold: the newest pieces go idle until the board is inside the
+   * limit, and the player can swap which ones are awake during planning.
+   */
+  R.pieces.applyLimit = function (s) {
+    var limit = R.pieces.limit(s);
+    if (!isFinite(limit)) return 0;
+    var awake = [];
+    var it = s.pieces.values();
+    var e = it.next();
+    while (!e.done) {
+      if (!e.value.idle) awake.push(e.value);
+      e = it.next();
+    }
+    if (awake.length <= limit) return 0;
+    awake.sort(function (a, b) { return b.id - a.id; });
+    var idled = 0;
+    for (var i = 0; i < awake.length - limit; i++) {
+      awake[i].idle = true;
+      idled++;
+    }
+    if (idled) {
+      R.beam.recompute(s);
+      R.emit(s, 'limited', { idled: idled, limit: limit });
+    }
+    return idled;
+  };
+
+  /*
    * Why a placement would be refused, or null when it is allowed.
-   * 'locked' | 'gold' | 'occupied' | 'terrain'
+   * 'locked' | 'gold' | 'occupied' | 'terrain' | 'limit'
    */
   R.pieces.placementProblem = function (s, type, c, r) {
     if (!R.pieces.isUnlocked(s, type)) return 'locked';
@@ -2806,6 +3158,7 @@ body.wide #sideNote { display: block; }
     if (s.grid.kind[i] !== R.EMPTY) return 'terrain';
     if (s.pieces.has(i)) return 'occupied';
     if (s.gold < R.pieces.cost(s, type)) return 'gold';
+    if (R.pieces.atLimit(s)) return 'limit';
     return null;
   };
 
@@ -2848,6 +3201,7 @@ body.wide #sideNote { display: block; }
       orient: type === 'lamp' ? 0 : (chosen % 2),
       dir: type === 'lamp' ? (chosen % 4) : R.N,
       cost: cost,
+      idle: false,
       placedAt: s.time,
       inactiveUntil: -1
     };
@@ -3804,7 +4158,12 @@ body.wide #sideNote { display: block; }
       var z = R.grid.worldZ(p.r);
       var sc = pieceScale(state, p);
       var dragging = state.ui.drag && state.ui.drag.pieceId === p.id;
-      var dim = (p.inactiveUntil > state.time || dragging) ? 0.45 : 1;
+      /*
+       * A piece re-forming or being dragged is half lit; one the core is not
+       * powering is darker still, so an idle board reads as a choice made
+       * rather than as pieces that stopped working.
+       */
+      var dim = p.idle ? 0.25 : ((p.inactiveUntil > state.time || dragging) ? 0.45 : 1);
       var diag = p.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
       var flip = flipTimes[p.id];
       if (flip) {
@@ -4647,19 +5006,44 @@ body.wide #sideNote { display: block; }
     el.strip.classList.add('flash');
   };
 
+  /*
+   * The open cut, named, with how many encounters it has left. It is only
+   * ever opened or closed during planning, so this line never changes while
+   * bodies are walking.
+   */
+  function cutHtml(s) {
+    if (!s.cut) return '';
+    var waves = s.cut.wavesLeft;
+    return ' &middot; <span class="warn">' + s.cut.name.toUpperCase() + ' OPEN</span>' +
+      ' <span class="em">' + waves + (waves === 1 ? ' wave' : ' waves') + '</span>';
+  }
+
+  /* "POWERED 4/5", or nothing at all where there is no limit. */
+  function poweredHtml(s) {
+    var limit = R.pieces.limit(s);
+    if (!isFinite(limit)) return '';
+    var n = R.pieces.activeCount(s);
+    var cls = n >= limit ? 'warn' : 'em';
+    return ' &middot; <span class="' + cls + '">POWERED ' + n + '/' + limit + '</span>';
+  }
+
   function stripHtml(s) {
     if (stripNotice && realTime < stripNoticeUntil) return '<span class="warn">' + stripNotice + '</span>';
     if (s.phase === 'wave') {
       return '<span class="em">WAVE ' + s.wave + '</span> &middot; ' +
-        R.enemies.remaining(s) + ' left';
+        R.enemies.remaining(s) + ' left' + cutHtml(s);
     }
     var next = s.wave + 1;
     var mouth = R.enemies.newMouthNote(s, next);
+    var endless = next > B.WAVES.length ? R.enemies.endlessEncounter(next) : null;
     /* A new entrance outranks the threat description: it changes the board. */
     var note = mouth
       ? '<span class="warn">' + mouth.toUpperCase() + '</span>'
-      : '<span class="em">' + R.enemies.threatNote(next) + '</span>';
-    return 'NEXT ' + pips(R.enemies.composition(next)) + '&middot; ' + note;
+      : (endless
+        ? '<span class="em">' + endless.name + '</span> &middot; ' + endless.note
+        : '<span class="em">' + R.enemies.threatNote(next) + '</span>');
+    return 'NEXT ' + pips(R.enemies.composition(next, s.cut ? s.cut.route : -1)) +
+      '&middot; ' + note + cutHtml(s) + poweredHtml(s);
   }
 
   /* ---------- HUD ---------- */
@@ -4715,11 +5099,27 @@ body.wide #sideNote { display: block; }
             ui.floaterAtCell('Need ' + e.cost, 'dmg', e.c, e.r);
           } else if (e.reason === 'locked') {
             ui.floaterAtCell('Locked', 'info', e.c, e.r);
+          } else if (e.reason === 'limit') {
+            ui.floaterAtCell('Core full', 'dmg', e.c, e.r);
+            ui.hint(s, 'limit', 6);
           }
           break;
         case 'place':
           ui.bumpGold();
           ui.hint(s, 'placed');
+          break;
+        case 'limited':
+          ui.notice('CORE POWERS ' + e.limit, 2.2);
+          ui.hint(s, 'limit', 7);
+          break;
+        case 'cutopen':
+          ui.notice(e.name.toUpperCase() + ' OPEN &middot; ' + e.waves +
+            (e.waves === 1 ? ' WAVE' : ' WAVES'), 2.2);
+          ui.banner(e.name.toUpperCase(), e.waves + (e.waves === 1 ? ' WAVE' : ' WAVES'), 2.0);
+          ui.hint(s, 'cut', 7);
+          break;
+        case 'cutclose':
+          ui.notice('THE ROAD IS WHOLE AGAIN', 1.8);
           break;
         case 'sell':
           ui.bumpGold();
@@ -5120,6 +5520,7 @@ body.wide #sideNote { display: block; }
   /* ---------- action bar over a selected piece ---------- */
 
   var actionBar = null;
+  var powerBtn = null;
 
   function buildActionBar() {
     actionBar = node('div', null);
@@ -5139,6 +5540,12 @@ body.wide #sideNote { display: block; }
       var p = R.pieces.selected(s);
       if (p) R.pieces.sell(s, p.c, p.r);
     }));
+    powerBtn = button('', 'IDLE', function () {
+      var st = R.state;
+      var p = R.pieces.selected(st);
+      if (p) R.pieces.setIdle(st, p, !p.idle);
+    });
+    actionBar.appendChild(powerBtn);
     el.overlayHost.appendChild(actionBar);
   }
 
@@ -5152,7 +5559,10 @@ body.wide #sideNote { display: block; }
     var flip = actionBar.children[0];
     var move = actionBar.children[1];
     var sell = actionBar.children[2];
-    var stamp = p.id + '|' + p.c + '|' + p.r + '|' + s.ui.moveMode + '|' + R.pieces.refundFor(s, p) + '|' + R.render.boardW;
+    var limited = isFinite(R.pieces.limit(s));
+    var stamp = p.id + '|' + p.c + '|' + p.r + '|' + s.ui.moveMode + '|' +
+      R.pieces.refundFor(s, p) + '|' + R.render.boardW + '|' + limited + '|' + p.idle +
+      '|' + R.pieces.activeCount(s);
     if (cache.bar === stamp) return;
     cache.bar = stamp;
 
@@ -5160,6 +5570,18 @@ body.wide #sideNote { display: block; }
     move.textContent = s.ui.moveMode ? 'TAP TILE' : 'MOVE';
     move.classList.toggle('danger', false);
     sell.innerHTML = 'SELL ' + R.pieces.refundFor(s, p);
+
+    /*
+     * The power control only exists where a limit does, which is endless.
+     * Waking a piece is refused when the core is already full, so the button
+     * says so rather than failing quietly.
+     */
+    powerBtn.style.display = limited ? '' : 'none';
+    if (limited) {
+      var full = !p.idle ? false : R.pieces.atLimit(s);
+      powerBtn.textContent = p.idle ? (full ? 'CORE FULL' : 'POWER') : 'IDLE';
+      powerBtn.classList.toggle('dim', full);
+    }
 
     var above = p.r > 1;
     var pos = R.render.projectCell(p.c, p.r, above ? 0.6 : 0);
@@ -5234,6 +5656,8 @@ body.wide #sideNote { display: block; }
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
     bulwark: 'A Bulwark shields the face it walks towards. Hit its flank or its back.',
     swarm: 'Swarms drain a beam fast. Split it, or add a second source.',
+    limit: 'The core can only power so many pieces at once. Tap a piece and IDLE it to free a slot; it keeps its place and its price.',
+    cut: 'A cut has opened through the road. Part of every group takes it, and it skips whatever you built across the stretch it bypasses.',
     splitter: 'SPLITTER unlocked: passes and bends at the same time, half the power each way.',
     reflector: 'REFLECTOR unlocked: sends the light back down the same chain at 60%.',
     lamp: 'LAMP unlocked: a second source, half the core power, aim it anywhere.',
@@ -5262,9 +5686,17 @@ body.wide #sideNote { display: block; }
 
   function syncHint(s) {
     var show = hintKey !== null && realTime < hintUntil && !s.ui.drag && !R.pieces.selected(s);
-    if (cache.hint === show) return;
-    cache.hint = show;
+    /*
+     * The hint and the undo chip share the foot of the board, so the hint
+     * steps up out of the way while the chip is on screen rather than either
+     * of them being lost behind the other.
+     */
+    var raised = show && !!R.pieces.undoLive(s);
+    var stamp = show + '|' + raised;
+    if (cache.hint === stamp) return;
+    cache.hint = stamp;
     hintNode.style.display = show ? 'block' : 'none';
+    hintNode.classList.toggle('raised', raised);
   }
 
   /* ---------- help ---------- */
@@ -5837,6 +6269,8 @@ body.wide #sideNote { display: block; }
     s.endless = true;
     s.phase = 'building';
     R.applyUnlocks(s, s.wave + 1);
+    R.pieces.applyLimit(s);
+    R.refreshCut(s);
     R.emit(s, 'endless', { wave: s.wave + 1 });
   };
 
@@ -5939,13 +6373,13 @@ body.wide #sideNote { display: block; }
      * already named it during planning, so nothing ever walks out of a portal
      * the player has not been shown.
      */
-    var uses = R.enemies.routesFor(s.wave);
+    var uses = R.enemies.routesFor(s.wave, s.cut ? s.cut.route : -1);
     var needed = uses.length ? uses[uses.length - 1] + 1 : 1;
     if (needed > s.routesOpen) {
       s.routesOpen = Math.min(needed, s.routes.length);
       R.emit(s, 'routeopen', { routes: s.routesOpen });
     }
-    s.spawnQueue = R.enemies.buildQueue(s.wave);
+    s.spawnQueue = R.enemies.buildQueue(s.wave, s.cut ? s.cut.route : -1);
     s.spawnCursor = 0;
     s.waveEnemiesTotal = s.spawnQueue.length;
     s.waveTime = 0;
@@ -5965,6 +6399,7 @@ body.wide #sideNote { display: block; }
     }
     s.phase = 'building';
     R.applyUnlocks(s, s.wave + 1);
+    R.refreshCut(s);
 
     /*
      * The run pauses on the choice rather than showing it over live combat,

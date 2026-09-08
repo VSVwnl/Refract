@@ -34,8 +34,16 @@
 
   /* ---------- wave data ---------- */
 
+  /*
+   * Bodies get tougher through the campaign and then stop. Past the cap an
+   * endless encounter is made harder by its shape rather than by handing the
+   * same body more health, so nothing ever turns into a wall that is merely
+   * slow to remove.
+   */
   en.hpMult = function (wave) {
-    return 1 + B.HP_MULT_PER_WAVE * (wave - 1);
+    var mult = 1 + B.HP_MULT_PER_WAVE * (wave - 1);
+    if (wave > B.WAVES.length) return Math.min(mult, B.ENDLESS.HP_MULT_CAP);
+    return mult;
   };
 
   en.speedMult = function (wave) {
@@ -44,38 +52,116 @@
     return Math.min(B.ENDLESS.SPEED_CAP, 1 + B.ENDLESS.SPEED_PER_WAVE * (wave - last));
   };
 
-  /* Endless waves rotate through four shapes and add a king every fifth wave. */
-  en.endlessGroups = function (wave) {
-    var count = B.ENDLESS.BASE_COUNT + wave;
-    var pattern = (wave - B.WAVES.length - 1) % 4;
+  /* ---------- endless ---------- */
+
+  /* Which endless encounter a wave is, as an index into the table. */
+  function endlessIndex(wave) {
+    var n = wave - B.WAVES.length - 1;
+    return ((n % B.ENDLESS.ENCOUNTERS.length) + B.ENDLESS.ENCOUNTERS.length) % B.ENDLESS.ENCOUNTERS.length;
+  }
+
+  en.endlessEncounter = function (wave) {
+    return B.ENDLESS.ENCOUNTERS[endlessIndex(wave)];
+  };
+
+  /*
+   * Endless encounters. Each one asks for a different shape of network:
+   *
+   *   split     both gates at once, so a single covered road is not enough
+   *   wall      a column of shields all facing the way they walk, which wants
+   *             light reaching a flank or a back rather than more of it
+   *   tide      bodies packed tightly enough that absorption eats the beam
+   *             before it reaches the back of the group
+   *   break     runners, who are only ever briefly in any one cell
+   *   vanguard  a Brute King with an escort, down whichever gate is quieter
+   *
+   * The cut, when one is open, always carries part of the pressure, so an
+   * encounter with a cut is never simply the same encounter again.
+   */
+  en.endlessGroups = function (wave, cutRoute) {
+    var E = B.ENDLESS;
+    var step = wave - B.WAVES.length;
+    var count = E.BASE_COUNT + Math.round(E.COUNT_PER_WAVE * step);
+    /*
+     * What grows with the wave is the shape of the pressure, not the health
+     * of any one body: more shields in a wall, more bodies in a tide, and
+     * tighter spacing, down to a floor so a group never becomes a single
+     * unreadable clump.
+     */
+    var shields = Math.min(E.SHIELD_CAP, E.SHIELD_BASE + Math.floor(step / E.SHIELD_EVERY));
+    var swarm = Math.min(E.SWARM_CAP, E.SWARM_BASE + Math.floor(step / E.SWARM_EVERY) * 4);
+    var gap = Math.max(E.GAP_FLOOR, E.GAP_BASE - E.GAP_PER_WAVE * step);
+    var kind = en.endlessEncounter(wave).key;
+    var cut = cutRoute === undefined ? -1 : cutRoute;
     var groups = [];
-    if (pattern === 0) {
-      groups.push(['mote', count, 0.6]);
-      groups.push(['runner', Math.ceil(count / 3), 0.5]);
-    } else if (pattern === 1) {
-      groups.push(['runner', count, 0.45]);
-      groups.push(['mote', Math.ceil(count / 3), 0.7]);
-    } else if (pattern === 2) {
-      groups.push(['swarmling', 8, 0.25]);
-      groups.push(['swarmling', 8, 0.25]);
-      groups.push(['swarmling', 8, 0.25]);
-      groups.push(['mote', Math.ceil(count / 2), 0.6]);
+
+    if (kind === 'split') {
+      var half = Math.ceil(count / 2);
+      groups.push(['mote', half, gap, 0]);
+      groups.push(['runner', Math.ceil(count / 3), gap * 0.8, 1]);
+      groups.push(['mote', half, gap, 1]);
+      groups.push(['bulwark', Math.max(1, shields - 2), gap * 2, 0]);
+    } else if (kind === 'wall') {
+      groups.push(['bulwark', shields, gap * 1.8, 0]);
+      groups.push(['bulwark', Math.max(1, shields - 1), gap * 1.8, 1]);
+      groups.push(['mote', Math.ceil(count / 2), gap, 0]);
+    } else if (kind === 'tide') {
+      groups.push(['swarmling', swarm, E.SWARM_GAP, 0]);
+      groups.push(['swarmling', swarm, E.SWARM_GAP, 1]);
+      groups.push(['bulwark', Math.max(1, shields - 2), gap * 2, 0]);
+      groups.push(['mote', Math.ceil(count / 2), gap, 1]);
+    } else if (kind === 'break') {
+      groups.push(['runner', count, gap * 0.6, 0]);
+      groups.push(['runner', Math.ceil(count / 2), gap * 0.6, 1]);
+      groups.push(['bulwark', Math.max(1, shields - 2), gap * 2, 0]);
+      groups.push(['mote', Math.ceil(count / 3), gap, 0]);
     } else {
-      groups.push(['bulwark', Math.max(2, Math.floor(count / 4)), 1.2]);
-      groups.push(['mote', count, 0.6]);
+      groups.push(['bruteking', 1, 0, 1]);
+      groups.push(['bulwark', Math.max(2, shields - 1), gap * 1.8, 0]);
+      groups.push(['runner', Math.ceil(count / 2), gap * 0.8, 1]);
+      groups.push(['mote', Math.ceil(count / 2), gap, 0]);
     }
-    if (wave % B.ENDLESS.KING_EVERY === 0) groups.unshift(['bruteking', 1, 0]);
+
+    /*
+     * A Brute King every so often, but never on top of an encounter that is
+     * already a wall of shields or its own vanguard: one hard idea at a time.
+     */
+    if (wave % E.KING_EVERY === 0 && kind !== 'vanguard' && kind !== 'wall') {
+      groups.unshift(['bruteking', 1, 0, 0]);
+    }
+
+    /*
+     * While a cut is open most of the encounter walks it. That is the whole
+     * point of a bypass: if only a handful took it, covering it would never be
+     * worth rearranging the network for, and the cut would be decoration.
+     */
+    if (cut >= 0) {
+      var moved = [];
+      for (var i = 0; i < groups.length; i++) {
+        var g = groups[i];
+        var take = Math.round(g[1] * E.CUT_SHARE);
+        if (take <= 0) continue;
+        g[1] -= take;
+        moved.push([g[0], take, g[2], cut]);
+      }
+      groups = groups.filter(function (g) { return g[1] > 0; }).concat(moved);
+    }
+
     return groups;
   };
 
-  en.groupsFor = function (wave) {
+  /*
+   * The campaign is read straight from the table. Only past it does the
+   * generator run, and only there can a cut be in play.
+   */
+  en.groupsFor = function (wave, cutRoute) {
     if (wave <= B.WAVES.length) return B.WAVES[wave - 1];
-    return en.endlessGroups(wave);
+    return en.endlessGroups(wave, cutRoute);
   };
 
   /* Flattened spawn schedule: one entry per enemy, in spawn order. */
-  en.buildQueue = function (wave) {
-    var groups = en.groupsFor(wave);
+  en.buildQueue = function (wave, cutRoute) {
+    var groups = en.groupsFor(wave, cutRoute);
     var queue = [];
     var t = 0;
     for (var g = 0; g < groups.length; g++) {
@@ -98,8 +184,8 @@
   };
 
   /* Which roads a wave uses, lowest first. */
-  en.routesFor = function (wave) {
-    var groups = en.groupsFor(wave);
+  en.routesFor = function (wave, cutRoute) {
+    var groups = en.groupsFor(wave, cutRoute);
     var seen = [];
     for (var g = 0; g < groups.length; g++) {
       var route = groups[g][3] || 0;
@@ -110,8 +196,8 @@
   };
 
   /* Composition summary for the incoming strip, in spawn order. */
-  en.composition = function (wave) {
-    var groups = en.groupsFor(wave);
+  en.composition = function (wave, cutRoute) {
+    var groups = en.groupsFor(wave, cutRoute);
     var out = [];
     for (var g = 0; g < groups.length; g++) {
       var last = out[out.length - 1];
@@ -143,6 +229,7 @@
   };
 
   en.threatNote = function (wave) {
+    if (wave > B.WAVES.length) return en.endlessEncounter(wave).note;
     var comp = en.composition(wave);
     var has = {};
     for (var i = 0; i < comp.length; i++) has[comp[i].type] = comp[i].count;
@@ -371,10 +458,13 @@
         s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;
         R.emit(s, 'leak', { enemy: e.type, leak: e.leak, x: e.x, z: e.z, id: e.id });
         /*
-         * A boss that arrives ends the run outright. Surviving the hit is not
-         * a win: the session is only won by destroying it on the road.
+         * In the campaign a boss that arrives ends the run outright, because
+         * the campaign is won by destroying Umbra rather than by outlasting
+         * it. Endless has no victory to protect, so a boss that gets through
+         * simply lands its own heavy hit and the run carries on. That keeps
+         * endless a curve the player can feel rather than a cliff.
          */
-        if (e.boss) {
+        if (e.boss && !s.endless) {
           s.bossBreached = e.type;
           R.emit(s, 'breach', { enemy: e.type, x: e.x, z: e.z, id: e.id });
         }

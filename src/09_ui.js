@@ -154,19 +154,44 @@
     el.strip.classList.add('flash');
   };
 
+  /*
+   * The open cut, named, with how many encounters it has left. It is only
+   * ever opened or closed during planning, so this line never changes while
+   * bodies are walking.
+   */
+  function cutHtml(s) {
+    if (!s.cut) return '';
+    var waves = s.cut.wavesLeft;
+    return ' &middot; <span class="warn">' + s.cut.name.toUpperCase() + ' OPEN</span>' +
+      ' <span class="em">' + waves + (waves === 1 ? ' wave' : ' waves') + '</span>';
+  }
+
+  /* "POWERED 4/5", or nothing at all where there is no limit. */
+  function poweredHtml(s) {
+    var limit = R.pieces.limit(s);
+    if (!isFinite(limit)) return '';
+    var n = R.pieces.activeCount(s);
+    var cls = n >= limit ? 'warn' : 'em';
+    return ' &middot; <span class="' + cls + '">POWERED ' + n + '/' + limit + '</span>';
+  }
+
   function stripHtml(s) {
     if (stripNotice && realTime < stripNoticeUntil) return '<span class="warn">' + stripNotice + '</span>';
     if (s.phase === 'wave') {
       return '<span class="em">WAVE ' + s.wave + '</span> &middot; ' +
-        R.enemies.remaining(s) + ' left';
+        R.enemies.remaining(s) + ' left' + cutHtml(s);
     }
     var next = s.wave + 1;
     var mouth = R.enemies.newMouthNote(s, next);
+    var endless = next > B.WAVES.length ? R.enemies.endlessEncounter(next) : null;
     /* A new entrance outranks the threat description: it changes the board. */
     var note = mouth
       ? '<span class="warn">' + mouth.toUpperCase() + '</span>'
-      : '<span class="em">' + R.enemies.threatNote(next) + '</span>';
-    return 'NEXT ' + pips(R.enemies.composition(next)) + '&middot; ' + note;
+      : (endless
+        ? '<span class="em">' + endless.name + '</span> &middot; ' + endless.note
+        : '<span class="em">' + R.enemies.threatNote(next) + '</span>');
+    return 'NEXT ' + pips(R.enemies.composition(next, s.cut ? s.cut.route : -1)) +
+      '&middot; ' + note + cutHtml(s) + poweredHtml(s);
   }
 
   /* ---------- HUD ---------- */
@@ -222,11 +247,27 @@
             ui.floaterAtCell('Need ' + e.cost, 'dmg', e.c, e.r);
           } else if (e.reason === 'locked') {
             ui.floaterAtCell('Locked', 'info', e.c, e.r);
+          } else if (e.reason === 'limit') {
+            ui.floaterAtCell('Core full', 'dmg', e.c, e.r);
+            ui.hint(s, 'limit', 6);
           }
           break;
         case 'place':
           ui.bumpGold();
           ui.hint(s, 'placed');
+          break;
+        case 'limited':
+          ui.notice('CORE POWERS ' + e.limit, 2.2);
+          ui.hint(s, 'limit', 7);
+          break;
+        case 'cutopen':
+          ui.notice(e.name.toUpperCase() + ' OPEN &middot; ' + e.waves +
+            (e.waves === 1 ? ' WAVE' : ' WAVES'), 2.2);
+          ui.banner(e.name.toUpperCase(), e.waves + (e.waves === 1 ? ' WAVE' : ' WAVES'), 2.0);
+          ui.hint(s, 'cut', 7);
+          break;
+        case 'cutclose':
+          ui.notice('THE ROAD IS WHOLE AGAIN', 1.8);
           break;
         case 'sell':
           ui.bumpGold();
@@ -627,6 +668,7 @@
   /* ---------- action bar over a selected piece ---------- */
 
   var actionBar = null;
+  var powerBtn = null;
 
   function buildActionBar() {
     actionBar = node('div', null);
@@ -646,6 +688,12 @@
       var p = R.pieces.selected(s);
       if (p) R.pieces.sell(s, p.c, p.r);
     }));
+    powerBtn = button('', 'IDLE', function () {
+      var st = R.state;
+      var p = R.pieces.selected(st);
+      if (p) R.pieces.setIdle(st, p, !p.idle);
+    });
+    actionBar.appendChild(powerBtn);
     el.overlayHost.appendChild(actionBar);
   }
 
@@ -659,7 +707,10 @@
     var flip = actionBar.children[0];
     var move = actionBar.children[1];
     var sell = actionBar.children[2];
-    var stamp = p.id + '|' + p.c + '|' + p.r + '|' + s.ui.moveMode + '|' + R.pieces.refundFor(s, p) + '|' + R.render.boardW;
+    var limited = isFinite(R.pieces.limit(s));
+    var stamp = p.id + '|' + p.c + '|' + p.r + '|' + s.ui.moveMode + '|' +
+      R.pieces.refundFor(s, p) + '|' + R.render.boardW + '|' + limited + '|' + p.idle +
+      '|' + R.pieces.activeCount(s);
     if (cache.bar === stamp) return;
     cache.bar = stamp;
 
@@ -667,6 +718,18 @@
     move.textContent = s.ui.moveMode ? 'TAP TILE' : 'MOVE';
     move.classList.toggle('danger', false);
     sell.innerHTML = 'SELL ' + R.pieces.refundFor(s, p);
+
+    /*
+     * The power control only exists where a limit does, which is endless.
+     * Waking a piece is refused when the core is already full, so the button
+     * says so rather than failing quietly.
+     */
+    powerBtn.style.display = limited ? '' : 'none';
+    if (limited) {
+      var full = !p.idle ? false : R.pieces.atLimit(s);
+      powerBtn.textContent = p.idle ? (full ? 'CORE FULL' : 'POWER') : 'IDLE';
+      powerBtn.classList.toggle('dim', full);
+    }
 
     var above = p.r > 1;
     var pos = R.render.projectCell(p.c, p.r, above ? 0.6 : 0);
@@ -741,6 +804,8 @@
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
     bulwark: 'A Bulwark shields the face it walks towards. Hit its flank or its back.',
     swarm: 'Swarms drain a beam fast. Split it, or add a second source.',
+    limit: 'The core can only power so many pieces at once. Tap a piece and IDLE it to free a slot; it keeps its place and its price.',
+    cut: 'A cut has opened through the road. Part of every group takes it, and it skips whatever you built across the stretch it bypasses.',
     splitter: 'SPLITTER unlocked: passes and bends at the same time, half the power each way.',
     reflector: 'REFLECTOR unlocked: sends the light back down the same chain at 60%.',
     lamp: 'LAMP unlocked: a second source, half the core power, aim it anywhere.',
@@ -769,9 +834,17 @@
 
   function syncHint(s) {
     var show = hintKey !== null && realTime < hintUntil && !s.ui.drag && !R.pieces.selected(s);
-    if (cache.hint === show) return;
-    cache.hint = show;
+    /*
+     * The hint and the undo chip share the foot of the board, so the hint
+     * steps up out of the way while the chip is on screen rather than either
+     * of them being lost behind the other.
+     */
+    var raised = show && !!R.pieces.undoLive(s);
+    var stamp = show + '|' + raised;
+    if (cache.hint === stamp) return;
+    cache.hint = stamp;
     hintNode.style.display = show ? 'block' : 'none';
+    hintNode.classList.toggle('raised', raised);
   }
 
   /* ---------- help ---------- */

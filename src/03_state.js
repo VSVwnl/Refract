@@ -91,6 +91,14 @@
       routes: board.routes,
       /* The road the player has been shown so far; the rest stay dark. */
       routesOpen: 1,
+      /*
+       * The temporary cut, when one is open: which of R.MAP.cuts it is, the
+       * route index the bodies using it walk, and how many more encounters it
+       * lasts. Null the rest of the time.
+       */
+      cut: null,
+      /* How many cuts this run has opened, so they come round in order. */
+      cutsOpened: 0,
       pieces: new Map(),
       nextPieceId: 1,
       routeVersion: 0,
@@ -123,6 +131,119 @@
     };
     s.rng = R.util.makeRng(s.rngSeed);
     return s;
+  };
+
+  /* ---------- temporary cuts through the road ---------- */
+
+  /*
+   * A cut is an extra road that leaves the north gate, skips a stretch of the
+   * middle, and rejoins. It exists only in endless, and only between waves:
+   * it is chosen and drawn during planning, holds still for the whole of the
+   * encounter that follows, and is taken away again afterwards. Nothing about
+   * the road ever changes while bodies are walking on it.
+   *
+   * A cut is only ever chosen when every cell it needs is empty, so a piece
+   * that has been paid for is never displaced or destroyed by one.
+   */
+  function cutCellsFree(s, def) {
+    for (var i = 0; i < def.cells.length; i++) {
+      var idx = R.grid.idx(def.cells[i][0], def.cells[i][1]);
+      if (s.grid.kind[idx] !== R.EMPTY) return false;
+      if (s.pieces.has(idx)) return false;
+    }
+    return true;
+  }
+
+  /* The road a cut walks: the north gate, the trunk to the cut, then on. */
+  function cutPath(s, def) {
+    var mouth = R.MAP.mouths[0];
+    var cells = mouth.lead
+      .concat(R.MAP.trunk.slice(mouth.join, def.from + 1))
+      .concat(def.cells)
+      .concat(R.MAP.trunk.slice(def.to));
+    var path = [];
+    for (var i = 0; i < cells.length; i++) {
+      path.push({ c: cells[i][0], r: cells[i][1], i: R.grid.idx(cells[i][0], cells[i][1]) });
+    }
+    return path;
+  }
+
+  R.cutsAvailable = function (s) {
+    if (!s.endless || !R.MAP.cuts) return [];
+    var out = [];
+    for (var i = 0; i < R.MAP.cuts.length; i++) {
+      if (cutCellsFree(s, R.MAP.cuts[i])) out.push(i);
+    }
+    return out;
+  };
+
+  R.openCut = function (s, index) {
+    var def = R.MAP.cuts[index];
+    if (!cutCellsFree(s, def)) return null;
+
+    for (var i = 0; i < def.cells.length; i++) {
+      s.grid.kind[R.grid.idx(def.cells[i][0], def.cells[i][1])] = R.ROAD;
+    }
+    var route = s.routes.length;
+    s.routes.push({ name: def.name, spawn: R.MAP.mouths[0].spawn.slice(), path: cutPath(s, def), cut: true });
+    s.routesOpen = s.routes.length;
+    s.roadCells = R.roadCellCount(s.grid.kind);
+    s.cutsOpened++;
+    s.cut = {
+      index: index,
+      name: def.name,
+      route: route,
+      wavesLeft: B.ENDLESS.CUT_WAVES,
+      skips: def.to - def.from - def.cells.length
+    };
+    R.beam.recompute(s);
+    R.emit(s, 'cutopen', { name: def.name, waves: s.cut.wavesLeft, skips: s.cut.skips });
+    return s.cut;
+  };
+
+  R.closeCut = function (s) {
+    if (!s.cut) return;
+    var def = R.MAP.cuts[s.cut.index];
+    for (var i = 0; i < def.cells.length; i++) {
+      s.grid.kind[R.grid.idx(def.cells[i][0], def.cells[i][1])] = R.EMPTY;
+    }
+    /* The cut is always the last road, so dropping it cannot renumber others. */
+    s.routes.length = s.cut.route;
+    s.routesOpen = Math.min(s.routesOpen, s.routes.length);
+    s.roadCells = R.roadCellCount(s.grid.kind);
+    var name = s.cut.name;
+    s.cut = null;
+    R.beam.recompute(s);
+    R.emit(s, 'cutclose', { name: name });
+  };
+
+  /*
+   * Between encounters: retire a cut that has run out, then consider opening
+   * one. Both happen in planning, so the board the player is looking at is the
+   * board the next encounter uses.
+   */
+  R.refreshCut = function (s) {
+    if (!s.endless) return;
+    var E = B.ENDLESS;
+
+    if (s.cut) {
+      s.cut.wavesLeft--;
+      if (s.cut.wavesLeft <= 0) R.closeCut(s);
+    }
+    if (s.cut) return;
+
+    var next = s.wave + 1;
+    if (next < E.CUT_FROM_WAVE) return;
+    if ((next - E.CUT_FROM_WAVE) % E.CUT_EVERY !== 0) return;
+
+    /*
+     * Cuts come round in a fixed order rather than at random, so a player can
+     * learn them, and so the game is never reacting to where they happened to
+     * build. Which one bypasses your network depends on where you built it.
+     */
+    var options = R.cutsAvailable(s);
+    if (!options.length) return;
+    R.openCut(s, options[s.cutsOpened % options.length]);
   };
 
   /* ---------- run upgrades ---------- */
