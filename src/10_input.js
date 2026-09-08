@@ -71,7 +71,26 @@
 
   /* ---------- taps ---------- */
 
+  /*
+   * While a walkthrough step is waiting for one particular tap, the rest of
+   * the board is inert. Nothing else is blocked: the help button, pause, sound
+   * and the palette all behave normally throughout.
+   */
+  function tutorialBlocks(s, cell) {
+    var step = R.tutorialStep(s);
+    if (!step) return false;
+    var want = R.tutorialCell(s);
+    if (step === 'place') return !want || cell.c !== want.c || cell.r !== want.r;
+    if (step === 'rotate') return !want || cell.c !== want.c || cell.r !== want.r;
+    /* The last step wants the START WAVE button, so the board is inert. */
+    return true;
+  }
+
   function handleTap(s, cell) {
+    if (tutorialBlocks(s, cell)) {
+      R.emit(s, 'tutorialblocked', { c: cell.c, r: cell.r });
+      return;
+    }
     var piece = R.pieces.at(s, cell.c, cell.r);
     var selected = R.pieces.selected(s);
 

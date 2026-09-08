@@ -3912,4 +3912,193 @@ module.exports = function (S) {
     await ctx.snap('a-endless-both-gates');
   };
 
+
+  /*
+   * The first-run walkthrough: three steps, each asking for one action, and a
+   * way out of it that leaves a returning player on the same viable board.
+   */
+  S.tutorial = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const bar = function () {
+      return st(function () {
+        const n = document.getElementById('tutorBar');
+        return n && n.style.display !== 'none' ? n.textContent.replace(/\s+/g, ' ').trim() : null;
+      });
+    };
+    /* A player who has never played: clear what the browser remembers. */
+    const firstRun = function () {
+      return st(function () {
+        try { localStorage.removeItem('refract.taught'); } catch (e) {}
+        R.meta.taught = false;
+        window.__REFRACT.title();
+        R.startRun();
+        R.ui.frame(R.state, 0.016);
+        return {
+          step: R.tutorialStep(R.state),
+          cell: R.tutorialCell(R.state),
+          selected: R.state.ui.selectedType,
+          canStart: R.canStartWave(R.state),
+          wave: R.state.wave,
+          lit: R.state.beam.litRoadCount
+        };
+      });
+    };
+
+    /* --- step one: place the mirror it points at --- */
+    let m = await firstRun();
+    ctx.log('  step 1: ' + JSON.stringify(m));
+    ctx.eq(m.step, 'place', 'the walkthrough opens on the placing step');
+    ctx.check(!!m.cell, 'and points at a tile');
+    ctx.eq(m.selected, 'mirror', 'with Mirror already chosen, so there is nothing to pick');
+    ctx.eq(m.canStart, false, 'the first wave cannot be started yet');
+    ctx.eq(m.lit, 1, 'and the core beam is already firing');
+    ctx.check((await bar()).indexOf('Place a Mirror') >= 0, 'the line says what to do: ' + await bar());
+    ctx.check((await bar()).indexOf('SKIP') >= 0, 'and offers a way out');
+    await ctx.snap('a-step-place');
+
+    /* Everything else on the board is inert while it waits for that tap. */
+    const blocked = await st(function () {
+      const s = R.state;
+      const want = R.tutorialCell(s);
+      let free = null;
+      for (let c = 0; c < 8 && !free; c++) {
+        for (let r = 0; r < 12 && !free; r++) {
+          if ((c !== want.c || r !== want.r) && !R.pieces.placementProblem(s, 'mirror', c, r)) free = { c: c, r: r };
+        }
+      }
+      return { free: free, before: s.pieces.size };
+    });
+    await ctx.tapCell(blocked.free.c, blocked.free.r);
+    ctx.eq(await st(function () { return R.state.pieces.size; }), blocked.before,
+      'tapping any other tile does nothing while it waits');
+    ctx.eq(await st(function () { return R.tutorialStep(R.state); }), 'place', 'and the step does not move on');
+
+    /* Help still opens and closes during all of this. */
+    await ctx.tap('#btnHelp');
+    ctx.check(await st(function () { return R.state.ui.helpOpen; }), 'help still opens during the walkthrough');
+    await ctx.tap('#overlayRoot .bigbtn');
+    ctx.eq(await st(function () { return R.state.ui.helpOpen; }), false, 'and closes again');
+    ctx.eq(await st(function () { return R.tutorialStep(R.state); }), 'place', 'without disturbing the step');
+
+    /* The tile it points at does work. */
+    const cell = await st(function () { return R.tutorialCell(R.state); });
+    await ctx.tapCell(cell.c, cell.r);
+    m = await st(function () {
+      return {
+        step: R.tutorialStep(R.state),
+        pieces: R.state.pieces.size,
+        lit: R.state.beam.litRoadCount,
+        canStart: R.canStartWave(R.state)
+      };
+    });
+    ctx.log('  step 2: ' + JSON.stringify(m));
+    ctx.eq(m.pieces, 1, 'the mirror goes down');
+    ctx.check(m.lit > 1, 'and the beam is redirected along the road (' + m.lit + ' lit)');
+    ctx.eq(m.step, 'rotate', 'the walkthrough moves to the turning step');
+    ctx.eq(m.canStart, false, 'the wave still cannot be started');
+    ctx.check((await bar()).indexOf('rotate') >= 0, 'the line teaches the next verb: ' + await bar());
+    await ctx.snap('b-step-rotate');
+
+    /*
+     * Nobody is asked to rotate away from a route that already works: the
+     * opening placement uses the better orientation, so selecting the piece is
+     * enough to move on.
+     */
+    const needs = await st(function () { return R.state.ui.tutorial.needsFlip; });
+    ctx.eq(needs, false, 'the opening placement is already the better way round');
+    const litBefore = await st(function () { return R.state.beam.litRoadCount; });
+    await ctx.tapCell(cell.c, cell.r);
+    m = await st(function () {
+      return { step: R.tutorialStep(R.state), lit: R.state.beam.litRoadCount, canStart: R.canStartWave(R.state) };
+    });
+    ctx.log('  step 3: ' + JSON.stringify(m));
+    ctx.eq(m.step, 'start', 'tapping the piece satisfies the step');
+    ctx.eq(m.lit, litBefore, 'and nothing was rotated away from a working route');
+    ctx.eq(m.canStart, true, 'now the wave can be started');
+    ctx.check((await bar()).indexOf('absorb') >= 0, 'the last line explains why it matters: ' + await bar());
+    ctx.check(await st(function () {
+      return document.getElementById('btnNext').classList.contains('callout');
+    }), 'and the button it wants is picked out');
+    await ctx.snap('c-step-start');
+
+    /* --- starting the wave ends it, for this run and for good --- */
+    await ctx.tap('#btnNext');
+    m = await st(function () {
+      return {
+        step: R.tutorialStep(R.state),
+        phase: R.state.phase,
+        wave: R.state.wave,
+        bar: document.getElementById('tutorBar').style.display,
+        taught: R.meta.taught,
+        stored: (function () { try { return localStorage.getItem('refract.taught'); } catch (e) { return null; } })(),
+        callout: document.getElementById('btnNext').classList.contains('callout')
+      };
+    });
+    ctx.log('  after starting: ' + JSON.stringify(m));
+    ctx.eq(m.wave, 1, 'wave 1 begins');
+    ctx.eq(m.phase, 'wave', 'and combat is running');
+    ctx.eq(m.step, null, 'the walkthrough is over');
+    ctx.eq(m.bar, 'none', 'its bar is gone');
+    ctx.eq(m.callout, false, 'and so is the glow on the button');
+    ctx.eq(m.taught, true, 'it is remembered');
+    ctx.eq(m.stored, '1', 'and written down, so it never comes back');
+
+    /* It does not return later in the same run, nor on the next one. */
+    const later = await st(function () {
+      window.__REFRACT.stepUntil('s.phase === "building"', 200);
+      R.restartRun(4711);
+      return { step: R.tutorialStep(R.state), pieces: R.state.pieces.size, canStart: R.canStartWave(R.state) };
+    });
+    ctx.eq(later.step, null, 'a fresh run for a taught player has no walkthrough');
+    ctx.eq(later.canStart, true, 'and can start its first wave straight away');
+
+    /* --- the skip path --- */
+    m = await firstRun();
+    ctx.eq(m.step, 'place', 'a player who has never played gets it again');
+    await ctx.tap('#tutorBar .tutorskip');
+    const skipped = await st(function () {
+      const s = R.state;
+      const pieces = [];
+      const it = s.pieces.values();
+      let e = it.next();
+      while (!e.done) { pieces.push({ type: e.value.type, c: e.value.c, r: e.value.r }); e = it.next(); }
+      return {
+        step: R.tutorialStep(s), pieces: pieces, lit: s.beam.litRoadCount,
+        canStart: R.canStartWave(s), gold: s.gold, taught: R.meta.taught,
+        bar: document.getElementById('tutorBar').style.display
+      };
+    });
+    ctx.log('  after skipping: ' + JSON.stringify(skipped));
+    ctx.eq(skipped.step, null, 'skipping ends the walkthrough');
+    ctx.eq(skipped.bar, 'none', 'and takes its bar away');
+    ctx.eq(skipped.pieces.length, 1, 'it leaves the opening mirror on the board');
+    ctx.eq(skipped.pieces[0].c + ',' + skipped.pieces[0].r, m.cell.c + ',' + m.cell.r,
+      'on the same tile the walkthrough pointed at');
+    ctx.check(skipped.lit > 1, 'so the beam is already useful (' + skipped.lit + ' lit)');
+    ctx.eq(skipped.canStart, true, 'and the first wave can start immediately');
+    ctx.eq(skipped.taught, true, 'skipping counts as having been taught');
+    await ctx.snap('d-skipped');
+
+    await ctx.tap('#btnNext');
+    const afterSkip = await st(function () {
+      return { wave: R.state.wave, phase: R.state.phase, hp: R.state.coreHp };
+    });
+    ctx.eq(afterSkip.wave, 1, 'wave 1 starts after skipping too');
+    ctx.eq(afterSkip.phase, 'wave', 'and combat runs');
+
+    /* --- the campaign it hands over to is the same one as ever --- */
+    const untouched = await st(function () {
+      window.__REFRACT.stepUntil('s.phase !== "wave"', 200);
+      const s = R.state;
+      return {
+        wave: s.wave, hp: s.coreHp,
+        waveTable: R.BALANCE.WAVES.length,
+        firstWave: R.enemies.buildQueue(1).length
+      };
+    });
+    ctx.log('  first wave played out: ' + JSON.stringify(untouched));
+    ctx.eq(untouched.waveTable, 8, 'still an eight encounter campaign');
+    ctx.eq(untouched.firstWave, 5, 'and wave 1 is still five bodies');
+  };
+
 };

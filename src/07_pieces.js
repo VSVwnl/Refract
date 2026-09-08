@@ -95,6 +95,7 @@
     s.ui.suggest = null;
     R.beam.recompute(s);
     R.emit(s, 'place', { id: piece.id, piece: type, c: c, r: r, cost: cost });
+    if (R.tutorialSaw) R.tutorialSaw(s, 'place', { id: piece.id });
     return piece;
   };
 
@@ -110,6 +111,7 @@
     else p.orient = p.orient ? 0 : 1;
     R.beam.recompute(s);
     R.emit(s, 'flip', { id: p.id, piece: p.type, c: c, r: r, toOrient: p.orient });
+    if (R.tutorialSaw) R.tutorialSaw(s, 'flip', { id: p.id });
     return true;
   };
 
@@ -124,6 +126,7 @@
     s.ui.selectedPieceId = piece ? piece.id : null;
     s.ui.moveMode = false;
     R.emit(s, 'select', { id: s.ui.selectedPieceId });
+    if (piece && R.tutorialSaw) R.tutorialSaw(s, 'select', { id: piece.id });
   };
 
   R.pieces.deselect = function (s) {

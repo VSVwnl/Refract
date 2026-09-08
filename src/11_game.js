@@ -100,6 +100,7 @@
     if (s.phase !== 'title') return;
     s.phase = 'building';
     R.refreshSuggestion(s);
+    R.beginTutorial(s);
     R.emit(s, 'runstart', {});
   };
 
@@ -108,6 +109,11 @@
     var s = R.newRun(seed);
     s.phase = 'building';
     R.refreshSuggestion(s);
+    /*
+     * No walkthrough here. Playing again is not a first run: whoever is
+     * pressing this button has already been through it once, or skipped it.
+     * It belongs to leaving the title card, which is where a first run starts.
+     */
     R.emit(s, 'runstart', {});
     return s;
   };
@@ -160,6 +166,118 @@
     return s.ui.suggest;
   };
 
+  /* ---------- the walkthrough ---------- */
+
+  /*
+   * A three-step walkthrough shown once, before the first wave of a player's
+   * first run. Each step asks for one action and says one short thing; there
+   * is no page of text and nothing to dismiss. It never runs during combat,
+   * because it is over before the first wave can be started, and planning has
+   * no clock, so nothing advances while it is being read.
+   */
+  R.TUTORIAL_TEXT = {
+    place: 'Your core fires a beam. Place a Mirror to redirect it.',
+    rotate: 'Tap a piece to rotate it. Aim light along the road.',
+    start: 'Enemies absorb light. Send your beam along their path to burn them before they reach the core.'
+  };
+
+  R.tutorialActive = function (s) {
+    return !!(s && s.ui.tutorial);
+  };
+
+  R.tutorialStep = function (s) {
+    return s && s.ui.tutorial ? s.ui.tutorial.step : null;
+  };
+
+  /* The tile the walkthrough is pointing at, or null. */
+  R.tutorialCell = function (s) {
+    var t = s && s.ui.tutorial;
+    return t && t.cell ? t.cell : null;
+  };
+
+  R.beginTutorial = function (s) {
+    if (R.meta.taught) return null;
+    var cell = R.refreshSuggestion(s);
+    if (!cell) return null;
+    s.ui.selectedType = 'mirror';
+    s.ui.tutorial = { step: 'place', cell: { c: cell.c, r: cell.r }, pieceId: null, needsFlip: false };
+    R.emit(s, 'tutorial', { step: 'place' });
+    return s.ui.tutorial;
+  };
+
+  R.endTutorial = function (s) {
+    if (!s.ui.tutorial) return;
+    s.ui.tutorial = null;
+    s.ui.suggest = null;
+    R.markTaught();
+    R.emit(s, 'tutorial', { step: null });
+  };
+
+  /*
+   * Whether the piece just placed would light more road the other way round.
+   * Only then is a rotation asked for.
+   */
+  function wantsFlip(s, piece) {
+    var other = piece.orient ? 0 : 1;
+    var now = s.beam.litRoadCount;
+    var res = R.beam.preview(s, piece.type, piece.c, piece.r, other, R.grid.idx(piece.c, piece.r));
+    if (!res) return false;
+    var lit = 0;
+    for (var i = 0; i < res.lit.length; i++) {
+      if (res.lit[i] > 0 && (s.grid.kind[i] === R.ROAD || s.grid.kind[i] === R.SPAWN)) lit++;
+    }
+    return lit > now;
+  }
+
+  /* Driven by what the player does, never by a timer. */
+  R.tutorialSaw = function (s, what, data) {
+    var t = s.ui.tutorial;
+    if (!t) return;
+
+    if (t.step === 'place' && what === 'place') {
+      var piece = R.pieces.byId(s, data.id);
+      if (!piece) return;
+      t.pieceId = piece.id;
+      t.cell = { c: piece.c, r: piece.r };
+      t.needsFlip = wantsFlip(s, piece);
+      t.step = 'rotate';
+      R.emit(s, 'tutorial', { step: 'rotate' });
+      return;
+    }
+
+    if (t.step === 'rotate') {
+      /*
+       * Turning the piece always satisfies this step. Merely selecting it does
+       * too, but only when the route it already makes is the good one, so the
+       * walkthrough never asks anyone to rotate away from a working answer.
+       */
+      if (what === 'flip') { t.needsFlip = false; }
+      if (t.needsFlip) return;
+      if (what === 'flip' || what === 'select') {
+        t.step = 'start';
+        t.cell = null;
+        s.ui.suggest = null;
+        R.emit(s, 'tutorial', { step: 'start' });
+      }
+    }
+  };
+
+  /*
+   * Skipping puts the same opening mirror down, so a returning player starts
+   * the first wave from the same viable board the walkthrough would have left.
+   */
+  R.skipTutorial = function (s) {
+    var t = s.ui.tutorial;
+    if (!t) return false;
+    if (!R.pieces.byId(s, t.pieceId) && t.cell) {
+      R.pieces.place(s, 'mirror', t.cell.c, t.cell.r);
+    }
+    R.pieces.deselect(s);
+    R.endTutorial(s);
+    R.emit(s, 'tutorialskip', {});
+    return true;
+  };
+
   /* ---------- run upgrades ---------- */
 
   /*
@@ -210,11 +328,16 @@
    * rearranging the network are never charged against a timer.
    */
   R.canStartWave = function (s) {
-    return s.phase === 'building';
+    if (s.phase !== 'building') return false;
+    /* The last step of the walkthrough is starting the wave itself. */
+    var step = R.tutorialStep(s);
+    return step === null || step === 'start';
   };
 
   R.startWave = function (s) {
-    if (s.phase !== 'building') return;
+    if (!R.canStartWave(s)) return;
+    /* Combat begins, so the walkthrough is done with, for good. */
+    if (s.ui.tutorial) R.endTutorial(s);
     s.wave++;
     /*
      * A road is opened by the encounter that first uses it, and the strip has

@@ -479,6 +479,62 @@ body.wide #sideNote { display: block; }
 
 .banner.sub { font-size: 15px; letter-spacing: 0.08em; color: var(--gold); top: 42%; }
 
+/* The walkthrough bar: one line, and a way out of it. */
+.tutor {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  /* The board overlay does not take taps; this bar has to. */
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 94%;
+  max-width: 360px;
+  padding: 9px 10px 9px 13px;
+  border-radius: 10px;
+  background: rgba(10, 16, 32, 0.96);
+  border: 1px solid var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.tutor .tutortext {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink);
+  text-align: left;
+}
+
+.tutor .tutorskip {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.tutor .tutorskip:active { color: var(--ink); border-color: var(--accent); }
+
+/* The one control the walkthrough is waiting for. */
+.actbtn.callout {
+  border-color: var(--gold);
+  animation: calloutPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes calloutPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 194, 71, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(255, 194, 71, 0.35); }
+}
+
 /* Lifted clear of the undo chip while that is on screen. */
 .hint.raised { bottom: 60px; }
 
@@ -1135,7 +1191,7 @@ body.wide #sideNote { display: block; }
     MAX_STEPS_PER_FRAME: 5
   };
 
-  R.STORAGE = { BEST: 'refract.best', MUTED: 'refract.muted' };
+  R.STORAGE = { BEST: 'refract.best', MUTED: 'refract.muted', TUTORIAL: 'refract.taught' };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 
@@ -1634,12 +1690,19 @@ body.wide #sideNote { display: block; }
   var B = R.BALANCE;
 
   /* Values that survive a restart. */
-  R.meta = { best: 0, muted: false };
+  R.meta = { best: 0, muted: false, taught: false };
 
   R.loadMeta = function () {
     var best = parseInt(R.util.storeGet(R.STORAGE.BEST), 10);
     R.meta.best = isFinite(best) && best > 0 ? best : 0;
     R.meta.muted = R.util.storeGet(R.STORAGE.MUTED) === '1';
+    R.meta.taught = R.util.storeGet(R.STORAGE.TUTORIAL) === '1';
+  };
+
+  /* Remembered so the walkthrough only ever happens once. */
+  R.markTaught = function () {
+    R.meta.taught = true;
+    R.util.storeSet(R.STORAGE.TUTORIAL, '1');
   };
 
   R.saveBest = function (score) {
@@ -1740,6 +1803,13 @@ body.wide #sideNote { display: block; }
         helpOpen: false,
         /* The tile the opening points at, until the first piece is placed. */
         suggest: null,
+        /*
+         * The walkthrough, or null. `step` is 'place', 'rotate' or 'start';
+         * `cell` is the tile it is pointing at; `needsFlip` records whether
+         * the piece as placed actually needs turning, so a player is never
+         * asked to rotate away from a route that already works.
+         */
+        tutorial: null,
         undo: null,
         lastResult: null
       },
@@ -2897,6 +2967,7 @@ body.wide #sideNote { display: block; }
     s.ui.suggest = null;
     R.beam.recompute(s);
     R.emit(s, 'place', { id: piece.id, piece: type, c: c, r: r, cost: cost });
+    if (R.tutorialSaw) R.tutorialSaw(s, 'place', { id: piece.id });
     return piece;
   };
 
@@ -2912,6 +2983,7 @@ body.wide #sideNote { display: block; }
     else p.orient = p.orient ? 0 : 1;
     R.beam.recompute(s);
     R.emit(s, 'flip', { id: p.id, piece: p.type, c: c, r: r, toOrient: p.orient });
+    if (R.tutorialSaw) R.tutorialSaw(s, 'flip', { id: p.id });
     return true;
   };
 
@@ -2926,6 +2998,7 @@ body.wide #sideNote { display: block; }
     s.ui.selectedPieceId = piece ? piece.id : null;
     s.ui.moveMode = false;
     R.emit(s, 'select', { id: s.ui.selectedPieceId });
+    if (piece && R.tutorialSaw) R.tutorialSaw(s, 'select', { id: piece.id });
   };
 
   R.pieces.deselect = function (s) {
@@ -4755,7 +4828,13 @@ body.wide #sideNote { display: block; }
           break;
         case 'place':
           ui.bumpGold();
-          ui.hint(s, 'placed');
+          if (!R.tutorialActive(s)) ui.hint(s, 'placed');
+          break;
+        case 'tutorialblocked':
+          ui.floaterAtCell('Not yet', 'info', e.c, e.r, { ttl: 0.6 });
+          break;
+        case 'tutorialskip':
+          ui.notice('TUTORIAL SKIPPED', 1.6);
           break;
         case 'sell':
           ui.bumpGold();
@@ -5143,12 +5222,18 @@ body.wide #sideNote { display: block; }
         : cost + '<span class="c">&#9670;</span>';
       el.btnCore.classList.toggle('dim', cost === null || s.gold < cost);
     }
+    /*
+     * The button says what it is for whenever a wave could be next, and is
+     * merely dimmed while the walkthrough is still on an earlier step. It only
+     * reads RUNNING once a wave actually is.
+     */
+    var planning = s.phase === 'building';
     var canStart = R.canStartWave(s);
-    var nextStamp = s.phase + '|' + s.wave;
+    var nextStamp = s.phase + '|' + s.wave + '|' + canStart;
     if (cache.next !== nextStamp) {
       cache.next = nextStamp;
-      el.btnNext.querySelector('.a1').textContent = canStart ? 'START WAVE ' + (s.wave + 1) : 'WAVE ' + s.wave;
-      el.btnNext.querySelector('.a2').innerHTML = canStart ? '&#9654;' : 'RUNNING';
+      el.btnNext.querySelector('.a1').textContent = planning ? 'START WAVE ' + (s.wave + 1) : 'WAVE ' + s.wave;
+      el.btnNext.querySelector('.a2').innerHTML = planning ? '&#9654;' : 'RUNNING';
       el.btnNext.classList.toggle('dim', !canStart);
     }
   }
@@ -5204,6 +5289,34 @@ body.wide #sideNote { display: block; }
     var half = actionBar.offsetWidth / 2 + 4;
     actionBar.style.left = Math.round(R.util.clamp(pos.x, half, R.render.boardW - half)) + 'px';
     actionBar.style.top = Math.round(above ? pos.y - 54 : pos.y + 30) + 'px';
+  }
+
+  /* ---------- the walkthrough ---------- */
+
+  var tutorBar = null;
+  var tutorText = null;
+
+  function buildTutorial() {
+    tutorBar = node('div', 'tutor');
+    tutorBar.id = 'tutorBar';
+    tutorText = node('p', 'tutortext', '');
+    tutorBar.appendChild(tutorText);
+    tutorBar.appendChild(button('tutorskip', 'SKIP TUTORIAL', function () {
+      R.audio.ensure();
+      R.skipTutorial(R.state);
+    }));
+    tutorBar.style.display = 'none';
+    el.overlayHost.appendChild(tutorBar);
+  }
+
+  function syncTutorial(s) {
+    var step = R.tutorialStep(s);
+    if (cache.tutor === step) return;
+    cache.tutor = step;
+    tutorBar.style.display = step ? 'flex' : 'none';
+    if (step) tutorText.textContent = R.TUTORIAL_TEXT[step];
+    /* The button is only the answer on the last step, so it only glows then. */
+    el.btnNext.classList.toggle('callout', step === 'start');
   }
 
   /* ---------- undo chip ---------- */
@@ -5284,6 +5397,8 @@ body.wide #sideNote { display: block; }
 
   /* Each hint fires at most once per run, and any new one replaces the old. */
   ui.hint = function (s, key, seconds) {
+    /* The walkthrough is saying its own thing; two voices at once is noise. */
+    if (R.tutorialActive(s)) return;
     if (!HINTS[key] || s.ui.hintsShown[key]) return;
     s.ui.hintsShown[key] = true;
     hintKey = key;
@@ -5303,7 +5418,7 @@ body.wide #sideNote { display: block; }
      * steps up out of the way while the chip is on screen rather than either
      * of them being lost behind the other.
      */
-    var raised = show && !!R.pieces.undoLive(s);
+    var raised = show && (!!R.pieces.undoLive(s) || R.tutorialActive(s));
     var stamp = show + '|' + raised;
     if (cache.hint === stamp) return;
     cache.hint = stamp;
@@ -5464,6 +5579,7 @@ body.wide #sideNote { display: block; }
     bindHudButtons();
     buildPalette();
     buildActionBar();
+    buildTutorial();
     buildUndoChip();
     buildGhost();
     buildHint();
@@ -5486,6 +5602,7 @@ body.wide #sideNote { display: block; }
     syncPalette(s);
     syncActionRow(s);
     syncActionBar(s);
+    syncTutorial(s);
     syncUndoChip(s);
     syncGhost(s);
     syncHint(s);
@@ -5589,7 +5706,26 @@ body.wide #sideNote { display: block; }
 
   /* ---------- taps ---------- */
 
+  /*
+   * While a walkthrough step is waiting for one particular tap, the rest of
+   * the board is inert. Nothing else is blocked: the help button, pause, sound
+   * and the palette all behave normally throughout.
+   */
+  function tutorialBlocks(s, cell) {
+    var step = R.tutorialStep(s);
+    if (!step) return false;
+    var want = R.tutorialCell(s);
+    if (step === 'place') return !want || cell.c !== want.c || cell.r !== want.r;
+    if (step === 'rotate') return !want || cell.c !== want.c || cell.r !== want.r;
+    /* The last step wants the START WAVE button, so the board is inert. */
+    return true;
+  }
+
   function handleTap(s, cell) {
+    if (tutorialBlocks(s, cell)) {
+      R.emit(s, 'tutorialblocked', { c: cell.c, r: cell.r });
+      return;
+    }
     var piece = R.pieces.at(s, cell.c, cell.r);
     var selected = R.pieces.selected(s);
 
@@ -5862,6 +5998,7 @@ body.wide #sideNote { display: block; }
     if (s.phase !== 'title') return;
     s.phase = 'building';
     R.refreshSuggestion(s);
+    R.beginTutorial(s);
     R.emit(s, 'runstart', {});
   };
 
@@ -5870,6 +6007,11 @@ body.wide #sideNote { display: block; }
     var s = R.newRun(seed);
     s.phase = 'building';
     R.refreshSuggestion(s);
+    /*
+     * No walkthrough here. Playing again is not a first run: whoever is
+     * pressing this button has already been through it once, or skipped it.
+     * It belongs to leaving the title card, which is where a first run starts.
+     */
     R.emit(s, 'runstart', {});
     return s;
   };
@@ -5922,6 +6064,118 @@ body.wide #sideNote { display: block; }
     return s.ui.suggest;
   };
 
+  /* ---------- the walkthrough ---------- */
+
+  /*
+   * A three-step walkthrough shown once, before the first wave of a player's
+   * first run. Each step asks for one action and says one short thing; there
+   * is no page of text and nothing to dismiss. It never runs during combat,
+   * because it is over before the first wave can be started, and planning has
+   * no clock, so nothing advances while it is being read.
+   */
+  R.TUTORIAL_TEXT = {
+    place: 'Your core fires a beam. Place a Mirror to redirect it.',
+    rotate: 'Tap a piece to rotate it. Aim light along the road.',
+    start: 'Enemies absorb light. Send your beam along their path to burn them before they reach the core.'
+  };
+
+  R.tutorialActive = function (s) {
+    return !!(s && s.ui.tutorial);
+  };
+
+  R.tutorialStep = function (s) {
+    return s && s.ui.tutorial ? s.ui.tutorial.step : null;
+  };
+
+  /* The tile the walkthrough is pointing at, or null. */
+  R.tutorialCell = function (s) {
+    var t = s && s.ui.tutorial;
+    return t && t.cell ? t.cell : null;
+  };
+
+  R.beginTutorial = function (s) {
+    if (R.meta.taught) return null;
+    var cell = R.refreshSuggestion(s);
+    if (!cell) return null;
+    s.ui.selectedType = 'mirror';
+    s.ui.tutorial = { step: 'place', cell: { c: cell.c, r: cell.r }, pieceId: null, needsFlip: false };
+    R.emit(s, 'tutorial', { step: 'place' });
+    return s.ui.tutorial;
+  };
+
+  R.endTutorial = function (s) {
+    if (!s.ui.tutorial) return;
+    s.ui.tutorial = null;
+    s.ui.suggest = null;
+    R.markTaught();
+    R.emit(s, 'tutorial', { step: null });
+  };
+
+  /*
+   * Whether the piece just placed would light more road the other way round.
+   * Only then is a rotation asked for.
+   */
+  function wantsFlip(s, piece) {
+    var other = piece.orient ? 0 : 1;
+    var now = s.beam.litRoadCount;
+    var res = R.beam.preview(s, piece.type, piece.c, piece.r, other, R.grid.idx(piece.c, piece.r));
+    if (!res) return false;
+    var lit = 0;
+    for (var i = 0; i < res.lit.length; i++) {
+      if (res.lit[i] > 0 && (s.grid.kind[i] === R.ROAD || s.grid.kind[i] === R.SPAWN)) lit++;
+    }
+    return lit > now;
+  }
+
+  /* Driven by what the player does, never by a timer. */
+  R.tutorialSaw = function (s, what, data) {
+    var t = s.ui.tutorial;
+    if (!t) return;
+
+    if (t.step === 'place' && what === 'place') {
+      var piece = R.pieces.byId(s, data.id);
+      if (!piece) return;
+      t.pieceId = piece.id;
+      t.cell = { c: piece.c, r: piece.r };
+      t.needsFlip = wantsFlip(s, piece);
+      t.step = 'rotate';
+      R.emit(s, 'tutorial', { step: 'rotate' });
+      return;
+    }
+
+    if (t.step === 'rotate') {
+      /*
+       * Turning the piece always satisfies this step. Merely selecting it does
+       * too, but only when the route it already makes is the good one, so the
+       * walkthrough never asks anyone to rotate away from a working answer.
+       */
+      if (what === 'flip') { t.needsFlip = false; }
+      if (t.needsFlip) return;
+      if (what === 'flip' || what === 'select') {
+        t.step = 'start';
+        t.cell = null;
+        s.ui.suggest = null;
+        R.emit(s, 'tutorial', { step: 'start' });
+      }
+    }
+  };
+
+  /*
+   * Skipping puts the same opening mirror down, so a returning player starts
+   * the first wave from the same viable board the walkthrough would have left.
+   */
+  R.skipTutorial = function (s) {
+    var t = s.ui.tutorial;
+    if (!t) return false;
+    if (!R.pieces.byId(s, t.pieceId) && t.cell) {
+      R.pieces.place(s, 'mirror', t.cell.c, t.cell.r);
+    }
+    R.pieces.deselect(s);
+    R.endTutorial(s);
+    R.emit(s, 'tutorialskip', {});
+    return true;
+  };
+
   /* ---------- run upgrades ---------- */
 
   /*
@@ -5972,11 +6226,16 @@ body.wide #sideNote { display: block; }
    * rearranging the network are never charged against a timer.
    */
   R.canStartWave = function (s) {
-    return s.phase === 'building';
+    if (s.phase !== 'building') return false;
+    /* The last step of the walkthrough is starting the wave itself. */
+    var step = R.tutorialStep(s);
+    return step === null || step === 'start';
   };
 
   R.startWave = function (s) {
-    if (s.phase !== 'building') return;
+    if (!R.canStartWave(s)) return;
+    /* Combat begins, so the walkthrough is done with, for good. */
+    if (s.ui.tutorial) R.endTutorial(s);
     s.wave++;
     /*
      * A road is opened by the encounter that first uses it, and the strip has

@@ -226,7 +226,13 @@
           break;
         case 'place':
           ui.bumpGold();
-          ui.hint(s, 'placed');
+          if (!R.tutorialActive(s)) ui.hint(s, 'placed');
+          break;
+        case 'tutorialblocked':
+          ui.floaterAtCell('Not yet', 'info', e.c, e.r, { ttl: 0.6 });
+          break;
+        case 'tutorialskip':
+          ui.notice('TUTORIAL SKIPPED', 1.6);
           break;
         case 'sell':
           ui.bumpGold();
@@ -614,12 +620,18 @@
         : cost + '<span class="c">&#9670;</span>';
       el.btnCore.classList.toggle('dim', cost === null || s.gold < cost);
     }
+    /*
+     * The button says what it is for whenever a wave could be next, and is
+     * merely dimmed while the walkthrough is still on an earlier step. It only
+     * reads RUNNING once a wave actually is.
+     */
+    var planning = s.phase === 'building';
     var canStart = R.canStartWave(s);
-    var nextStamp = s.phase + '|' + s.wave;
+    var nextStamp = s.phase + '|' + s.wave + '|' + canStart;
     if (cache.next !== nextStamp) {
       cache.next = nextStamp;
-      el.btnNext.querySelector('.a1').textContent = canStart ? 'START WAVE ' + (s.wave + 1) : 'WAVE ' + s.wave;
-      el.btnNext.querySelector('.a2').innerHTML = canStart ? '&#9654;' : 'RUNNING';
+      el.btnNext.querySelector('.a1').textContent = planning ? 'START WAVE ' + (s.wave + 1) : 'WAVE ' + s.wave;
+      el.btnNext.querySelector('.a2').innerHTML = planning ? '&#9654;' : 'RUNNING';
       el.btnNext.classList.toggle('dim', !canStart);
     }
   }
@@ -675,6 +687,34 @@
     var half = actionBar.offsetWidth / 2 + 4;
     actionBar.style.left = Math.round(R.util.clamp(pos.x, half, R.render.boardW - half)) + 'px';
     actionBar.style.top = Math.round(above ? pos.y - 54 : pos.y + 30) + 'px';
+  }
+
+  /* ---------- the walkthrough ---------- */
+
+  var tutorBar = null;
+  var tutorText = null;
+
+  function buildTutorial() {
+    tutorBar = node('div', 'tutor');
+    tutorBar.id = 'tutorBar';
+    tutorText = node('p', 'tutortext', '');
+    tutorBar.appendChild(tutorText);
+    tutorBar.appendChild(button('tutorskip', 'SKIP TUTORIAL', function () {
+      R.audio.ensure();
+      R.skipTutorial(R.state);
+    }));
+    tutorBar.style.display = 'none';
+    el.overlayHost.appendChild(tutorBar);
+  }
+
+  function syncTutorial(s) {
+    var step = R.tutorialStep(s);
+    if (cache.tutor === step) return;
+    cache.tutor = step;
+    tutorBar.style.display = step ? 'flex' : 'none';
+    if (step) tutorText.textContent = R.TUTORIAL_TEXT[step];
+    /* The button is only the answer on the last step, so it only glows then. */
+    el.btnNext.classList.toggle('callout', step === 'start');
   }
 
   /* ---------- undo chip ---------- */
@@ -755,6 +795,8 @@
 
   /* Each hint fires at most once per run, and any new one replaces the old. */
   ui.hint = function (s, key, seconds) {
+    /* The walkthrough is saying its own thing; two voices at once is noise. */
+    if (R.tutorialActive(s)) return;
     if (!HINTS[key] || s.ui.hintsShown[key]) return;
     s.ui.hintsShown[key] = true;
     hintKey = key;
@@ -774,7 +816,7 @@
      * steps up out of the way while the chip is on screen rather than either
      * of them being lost behind the other.
      */
-    var raised = show && !!R.pieces.undoLive(s);
+    var raised = show && (!!R.pieces.undoLive(s) || R.tutorialActive(s));
     var stamp = show + '|' + raised;
     if (cache.hint === stamp) return;
     cache.hint = stamp;
@@ -935,6 +977,7 @@
     bindHudButtons();
     buildPalette();
     buildActionBar();
+    buildTutorial();
     buildUndoChip();
     buildGhost();
     buildHint();
@@ -957,6 +1000,7 @@
     syncPalette(s);
     syncActionRow(s);
     syncActionBar(s);
+    syncTutorial(s);
     syncUndoChip(s);
     syncGhost(s);
     syncHint(s);

@@ -204,6 +204,18 @@ async function main() {
   const lines = [];
   function log(s) { lines.push(s); console.log(s); }
 
+  /*
+   * Scenarios run as a player who has already been taught, because almost
+   * none of them are about the first run. The `tutorial` scenario is the one
+   * that is, and it clears this for itself.
+   */
+  const firstRunScenarios = ['tutorial'];
+  if (firstRunScenarios.indexOf(name) < 0) {
+    await page.addInitScript(function () {
+      try { localStorage.setItem('refract.taught', '1'); } catch (e) {}
+    });
+  }
+
   const t0 = Date.now();
   await page.goto(url, { waitUntil: 'load' });
   if (flag('nowebgl')) {

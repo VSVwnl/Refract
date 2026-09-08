@@ -8,12 +8,19 @@
   var B = R.BALANCE;
 
   /* Values that survive a restart. */
-  R.meta = { best: 0, muted: false };
+  R.meta = { best: 0, muted: false, taught: false };
 
   R.loadMeta = function () {
     var best = parseInt(R.util.storeGet(R.STORAGE.BEST), 10);
     R.meta.best = isFinite(best) && best > 0 ? best : 0;
     R.meta.muted = R.util.storeGet(R.STORAGE.MUTED) === '1';
+    R.meta.taught = R.util.storeGet(R.STORAGE.TUTORIAL) === '1';
+  };
+
+  /* Remembered so the walkthrough only ever happens once. */
+  R.markTaught = function () {
+    R.meta.taught = true;
+    R.util.storeSet(R.STORAGE.TUTORIAL, '1');
   };
 
   R.saveBest = function (score) {
@@ -114,6 +121,13 @@
         helpOpen: false,
         /* The tile the opening points at, until the first piece is placed. */
         suggest: null,
+        /*
+         * The walkthrough, or null. `step` is 'place', 'rotate' or 'start';
+         * `cell` is the tile it is pointing at; `needsFlip` records whether
+         * the piece as placed actually needs turning, so a player is never
+         * asked to rotate away from a route that already works.
+         */
+        tutorial: null,
         undo: null,
         lastResult: null
       },

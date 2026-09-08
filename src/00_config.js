@@ -271,5 +271,5 @@
     MAX_STEPS_PER_FRAME: 5
   };
 
-  R.STORAGE = { BEST: 'refract.best', MUTED: 'refract.muted' };
+  R.STORAGE = { BEST: 'refract.best', MUTED: 'refract.muted', TUTORIAL: 'refract.taught' };
 })(typeof window !== 'undefined' ? window : globalThis);

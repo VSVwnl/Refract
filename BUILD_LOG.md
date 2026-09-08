@@ -19,6 +19,7 @@ Design (locked in the design session before any code existed; see `MASTER_SPEC.m
 - Pieces: Mirror (90°), Splitter (pass + reflect at 50% each), Reflector (return at 60%), Lamp (second source at 50% of core power). Core levels 1–6.
 - Controls: tap palette → tap tile to place; tap piece → flip/move/sell; drag to move; undo within 3 s; portrait, touch-first, one active pointer.
 - Session: eight encounters, about 5 to 6 minutes at normal speed; win/lose/reset; endless after victory; score with best score.
+- First run only: a three step walkthrough before wave 1, remembered in localStorage. Place the marked mirror, tap it to learn the verb, start the wave. A SKIP TUTORIAL button places the same opening mirror so a returning player starts from the same viable board.
 - Endless is the original four rotating wave shapes with their original counts, spacing and scaling. The single change from the campaign's rules is that every endless group is halved between the two gates, so a network covering one road does not hold. Session 7's larger endless rebuild was reverted at the owner's request; see session 8.
 - Planning is untimed. Combat is paused between encounters until the player taps START WAVE; there is no countdown and no reward for starting early. Moving, turning and selling pieces during planning is free and refunds the price paid; mid-combat a moved piece goes dark for 0.3 s and a sale returns the sell rate.
 - Enemies: Mote, Runner, Swarmling, Bulwark, Brute King, Umbra. Absorption (how much light a body removes from what continues past it) and shielding (how much damage is deflected when light meets the face it walks towards) are separate constants.
@@ -1306,4 +1307,31 @@ So endless is a little harder than it was, and the extra difficulty is answerabl
 **Evidence.** 26 Node tests, 24 browser scenarios and the compliance check all pass. The session 7 `endless` scenario was removed with the rest of that work and replaced by `endlessgates` (34 checks): the campaign wave table and speeds unchanged, every endless wave arriving through both gates with neither carrying more than two bodies' worth of the difference, the four shapes still rotating with their swarm, shield and Brute King waves intact, and the three-way build comparison above asserted rather than merely logged.
 
 **A note found on the way.** Comparing the tree against the pre-session-7 commit showed `src/05_beam.js` as 892 changed lines; the real change was two lines, and the rest was line endings. The scripted edits used through these sessions rewrote some files from LF to CRLF. It makes no difference to the build, which concatenates whatever it reads, and `check.js` passes either way, but it makes diffs noisier than they should be.
+
+---
+
+## Session 9 - A first-run walkthrough
+
+**Goal:** teach the opening through required actions rather than text, once, before wave 1, without touching the campaign.
+
+**Three steps, each asking for one thing.** Leaving the title card starts it. Step one marks the tile the solver rates highest, selects Mirror so there is nothing to pick, and says "Your core fires a beam. Place a Mirror to redirect it." Placing it moves to step two, which highlights the piece and says "Tap a piece to rotate it. Aim light along the road." Step three highlights START WAVE and explains absorption. Starting the wave ends the walkthrough for good.
+
+**Nobody is asked to rotate away from a working route.** On placement the game measures whether the other orientation would light more road and stores that as `needsFlip`. The opening placement uses the better orientation already, so `needsFlip` is false and simply tapping the piece satisfies the step; a rotation is only required when turning it would genuinely help. The test asserts both that `needsFlip` is false for the opening tile and that coverage is unchanged across the step.
+
+**Blocking is narrow.** `tutorialBlocks` makes the board inert only for the tap the current step is waiting for. Help, pause, sound, speed and the palette all work throughout, and the test opens and closes Help mid-step to prove it. A blocked tap says "Not yet" rather than doing nothing silently.
+
+**Nothing advances.** Planning has had no clock since session 5, so no wave, countdown or enemy moves while the walkthrough is being read.
+
+**Skip.** A small SKIP TUTORIAL button on the bar places the same opening mirror, marks the player taught and clears the walkthrough, so a returning player starts wave 1 from exactly the board the walkthrough would have left. Verified: one mirror, on the same tile, 7 road cells lit, wave startable.
+
+**Remembered once.** `refract.taught` in localStorage, read at boot alongside best score and mute, and guarded by the existing try/catch storage helpers so the game still runs where storage is blocked.
+
+**Two things found while building it.**
+
+- The walkthrough began on `restartRun` as well as `startRun`, which meant every scenario that restarts the game landed in it: eleven scenarios threw or failed at once. Playing again is not a first run, so it now belongs only to leaving the title card. That is also the correct behaviour for a player pressing TRY AGAIN.
+- With the walkthrough on screen the ordinary opening hint printed over it, and the action button read "WAVE 0 RUNNING" because it was deriving its label from `canStartWave`, which the walkthrough holds shut. The hints are now suppressed while the walkthrough is speaking, and the button takes its label from the phase and only its dimming from `canStartWave`.
+
+Test scenarios themselves now run as a player who has already been taught, set once in `tools/qa.js`; `tutorial` clears it for itself.
+
+**Evidence.** 26 Node tests, 25 browser scenarios and the compliance check all pass, including a new `tutorial` scenario with 44 checks covering both paths: each step's text and state, that other tiles are inert and the step does not move on, that Help opens and closes without disturbing it, that placing redirects the beam, that no rotation is demanded when the route already works, that starting the wave clears the bar and the button glow and writes the flag, that it does not return later in the run or on the next one, and that skipping leaves the same mirror and still starts wave 1. Campaign fingerprint byte-identical to the one taken before any of this work.
 

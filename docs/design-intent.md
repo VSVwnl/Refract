@@ -10,7 +10,7 @@ For players who like short, tactical mobile sessions and spatial puzzles. REFRAC
 
 ## 3. How to play (controls)
 
-Tap PLAY. The beam is already firing and one tile is marked. Tap it to place a mirror and the beam sweeps into its new route. Tap a placed piece to flip, move or sell it, or drag it. The bottom buttons choose Mirror, Splitter, Reflector and Lamp; CORE upgrades the beam. Nothing starts until you tap START WAVE, so planning is untimed and rearranging is free.
+Tap PLAY. A short walkthrough marks one tile, has you place a mirror, and hands over; it can be skipped and never repeats. Tap a placed piece to flip, move or sell it, or drag it. The bottom buttons choose Mirror, Splitter, Reflector and Lamp; CORE upgrades the beam. Nothing starts until you tap START WAVE, so planning is untimed and rearranging is free.
 
 ## 4. Core loop
 
