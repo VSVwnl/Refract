@@ -189,8 +189,10 @@
        * limit sit idle on the board and can be swapped in during planning.
        */
       ACTIVE_PIECES: 5,
-      /* A cut opens every few waves and stays for a stated number of them. */
-      /* How much of an encounter walks an open cut. */
+      /*
+       * Cuts: how much of an encounter walks an open one, how often one
+       * opens, how many encounters it stays for, and the wave they start.
+       */
       CUT_SHARE: 0.6,
       CUT_EVERY: 3,
       CUT_WAVES: 2,
