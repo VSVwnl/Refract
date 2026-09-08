@@ -161,8 +161,12 @@
         R.enemies.remaining(s) + ' left';
     }
     var next = s.wave + 1;
-    return 'NEXT ' + pips(R.enemies.composition(next)) +
-      '&middot; <span class="em">' + R.enemies.threatNote(next) + '</span>';
+    var mouth = R.enemies.newMouthNote(s, next);
+    /* A new entrance outranks the threat description: it changes the board. */
+    var note = mouth
+      ? '<span class="warn">' + mouth.toUpperCase() + '</span>'
+      : '<span class="em">' + R.enemies.threatNote(next) + '</span>';
+    return 'NEXT ' + pips(R.enemies.composition(next)) + '&middot; ' + note;
   }
 
   /* ---------- HUD ---------- */
@@ -732,7 +736,7 @@
   var hintKey = null;
 
   var HINTS = {
-    start: 'Tap a tile on the beam to bend it along the road.',
+    start: 'Tap the marked tile to bend the beam along the road.',
     placed: 'Tap a placed piece to flip, move or sell it.',
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
     bulwark: 'A Bulwark shields the face it walks towards. Hit its flank or its back.',

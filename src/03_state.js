@@ -25,21 +25,34 @@
     return false;
   };
 
-  /* Builds the cell-kind array and the ordered path for the fixed map. */
+  /*
+   * Builds the cell-kind array and one ordered path per road. Roads may share
+   * cells; a cell is road if any road uses it, and the core wins over both.
+   */
   R.buildBoard = function () {
     var cells = B.COLS * B.ROWS;
     var kind = new Uint8Array(cells);
-    var path = [];
-    var i;
-    for (i = 0; i < R.MAP.path.length; i++) {
-      var c = R.MAP.path[i][0];
-      var r = R.MAP.path[i][1];
-      path.push({ c: c, r: r, i: r * B.COLS + c });
-      kind[r * B.COLS + c] = R.ROAD;
+    var routes = [];
+
+    for (var n = 0; n < R.MAP.mouths.length; n++) {
+      var def = R.MAP.mouths[n];
+      var cells = def.lead.concat(R.MAP.trunk.slice(def.join || 0));
+      var path = [];
+      for (var i = 0; i < cells.length; i++) {
+        var c = cells[i][0];
+        var r = cells[i][1];
+        path.push({ c: c, r: r, i: r * B.COLS + c });
+        kind[r * B.COLS + c] = R.ROAD;
+      }
+      routes.push({ name: def.name, spawn: def.spawn.slice(), path: path });
     }
-    kind[R.MAP.spawn[1] * B.COLS + R.MAP.spawn[0]] = R.SPAWN;
+
+    for (n = 0; n < routes.length; n++) {
+      var sp = routes[n].spawn;
+      kind[sp[1] * B.COLS + sp[0]] = R.SPAWN;
+    }
     kind[R.MAP.core[1] * B.COLS + R.MAP.core[0]] = R.CORE;
-    return { kind: kind, path: path };
+    return { kind: kind, routes: routes };
   };
 
   /* Number of road cells the LIT counter is measured against. */
@@ -75,7 +88,9 @@
       wavesCleared: 0,
       grid: { cols: B.COLS, rows: B.ROWS, kind: board.kind },
       roadCells: R.roadCellCount(board.kind),
-      path: board.path,
+      routes: board.routes,
+      /* The road the player has been shown so far; the rest stay dark. */
+      routesOpen: 1,
       pieces: new Map(),
       nextPieceId: 1,
       routeVersion: 0,
@@ -97,6 +112,8 @@
         drag: null,
         hintsShown: {},
         helpOpen: false,
+        /* The tile the opening points at, until the first piece is placed. */
+        suggest: null,
         undo: null,
         lastResult: null
       },

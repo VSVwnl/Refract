@@ -19,7 +19,7 @@
     return pool.length ? pool.pop() : {
       id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0, shield: 0,
       gold: 0, leak: 0, radius: 0, boss: false, face: 0,
-      shield0: 0, exposeAt: 0, phase: 1,
+      shield0: 0, exposeAt: 0, phase: 1, route: 0,
       damage: 0, hitAt: -1, shieldedAt: -1, exposedAt: -1, crossfireAt: -1,
       dirMask: 0, peakHit: 0, glowUntil: -1, glowPower: 0,
       x: 0, z: 0, cell: -1, spawnAt: 0
@@ -82,13 +82,31 @@
       var type = groups[g][0];
       var count = groups[g][1];
       var gap = groups[g][2];
+      var route = groups[g][3] || 0;
       for (var i = 0; i < count; i++) {
-        queue.push({ type: type, at: t });
+        queue.push({ type: type, at: t, route: route });
         if (i < count - 1) t += gap;
       }
       t += B.GROUP_GAP;
     }
+    /*
+     * Groups are written one after another, but two roads run at once, so a
+     * queue that is already ordered by time reads correctly on both.
+     */
+    queue.sort(function (a, b) { return a.at - b.at; });
     return queue;
+  };
+
+  /* Which roads a wave uses, lowest first. */
+  en.routesFor = function (wave) {
+    var groups = en.groupsFor(wave);
+    var seen = [];
+    for (var g = 0; g < groups.length; g++) {
+      var route = groups[g][3] || 0;
+      if (seen.indexOf(route) < 0) seen.push(route);
+    }
+    seen.sort();
+    return seen;
   };
 
   /* Composition summary for the incoming strip, in spawn order. */
@@ -108,6 +126,22 @@
    * formation, never the player's layout, so the preview cannot be accused of
    * reacting to what has been built.
    */
+  /*
+   * Names an entrance the next encounter uses that has not been used before,
+   * or null. The strip shows this during planning, so a road never opens
+   * without the player having been told about it first.
+   */
+  en.newMouthNote = function (s, wave) {
+    var uses = en.routesFor(wave);
+    for (var i = 0; i < uses.length; i++) {
+      if (uses[i] >= s.routesOpen) {
+        var road = s.routes[uses[i]];
+        return 'the ' + road.name + ' gate opens';
+      }
+    }
+    return null;
+  };
+
   en.threatNote = function (wave) {
     var comp = en.composition(wave);
     var has = {};
@@ -124,11 +158,13 @@
 
   /* ---------- spawning ---------- */
 
-  en.spawn = function (s, type) {
+  en.spawn = function (s, type, route) {
     var def = B.ENEMY[type];
     var e = acquire();
     e.id = s.nextEnemyId++;
     e.type = type;
+    e.route = route || 0;
+    if (e.route >= s.routes.length) e.route = 0;
     e.maxHp = def.boss ? def.hp : Math.round(def.hp * en.hpMult(s.wave));
     e.hp = e.maxHp;
     e.t = -1;
@@ -156,7 +192,7 @@
     e.spawnAt = s.time;
     positionOf(s, e);
     s.enemies.push(e);
-    R.emit(s, 'spawn', { enemy: type, id: e.id });
+    R.emit(s, 'spawn', { enemy: type, id: e.id, route: e.route });
     return e;
   };
 
@@ -166,31 +202,38 @@
    * Enemies walk from a virtual cell one row above the portal. Below t = -0.5
    * they are still off the board and cannot be hit.
    */
-  function pathPoint(s, index, out) {
+  function pathPoint(s, route, index, out) {
+    var road = s.routes[route];
     if (index < 0) {
-      out.x = R.grid.worldX(R.MAP.spawn[0]);
-      out.z = R.grid.worldZ(R.MAP.spawn[1]) - 1;
+      out.x = R.grid.worldX(road.spawn[0]);
+      out.z = R.grid.worldZ(road.spawn[1]) - 1;
     } else {
-      var p = s.path[Math.min(index, s.path.length - 1)];
+      var p = road.path[Math.min(index, road.path.length - 1)];
       out.x = R.grid.worldX(p.c);
       out.z = R.grid.worldZ(p.r);
     }
     return out;
   }
 
+  /* The last index on a road, which is the core. */
+  en.endOf = function (s, route) {
+    return s.routes[route].path.length - 1;
+  };
+
   var pa = { x: 0, z: 0 };
   var pb = { x: 0, z: 0 };
 
   function positionOf(s, e) {
+    var road = s.routes[e.route];
     var k = Math.floor(e.t);
     var frac = e.t - k;
-    pathPoint(s, k, pa);
-    pathPoint(s, k + 1, pb);
+    pathPoint(s, e.route, k, pa);
+    pathPoint(s, e.route, k + 1, pb);
     e.x = pa.x + (pb.x - pa.x) * frac;
     e.z = pa.z + (pb.z - pa.z) * frac;
     var idx = Math.round(e.t);
     if (idx < 0) e.cell = -1;
-    else e.cell = s.path[Math.min(idx, s.path.length - 1)].i;
+    else e.cell = road.path[Math.min(idx, road.path.length - 1)].i;
     e.face = facing(pa, pb, e.face);
   }
 
@@ -240,16 +283,16 @@
   en.spawnStep = function (s, dt) {
     if (s.phase !== 'wave') return;
     while (s.spawnCursor < s.spawnQueue.length && s.spawnQueue[s.spawnCursor].at <= s.waveTime) {
-      en.spawn(s, s.spawnQueue[s.spawnCursor].type);
+      en.spawn(s, s.spawnQueue[s.spawnCursor].type, s.spawnQueue[s.spawnCursor].route);
       s.spawnCursor++;
     }
   };
 
   en.moveStep = function (s, dt) {
     var list = s.enemies;
-    var last = s.path.length - 1;
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
+      var last = en.endOf(s, e.route);
       e.t += e.speed * dt;
       positionOf(s, e);
       /*
@@ -280,7 +323,6 @@
    */
   en.resolveStep = function (s, dt) {
     var list = s.enemies;
-    var end = s.path.length - 1;
     var step = dt || 0;
     var crossfire = R.upgradeValue(s, 'crossfire', 'bonus', 0);
     var glowSeconds = R.upgradeValue(s, 'afterglow', 'seconds', 0);
@@ -323,7 +365,7 @@
         pool.push(e);
         continue;
       }
-      if (e.t >= end) {
+      if (e.t >= en.endOf(s, e.route)) {
         list.splice(i, 1);
         s.coreHp -= e.leak;
         s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;

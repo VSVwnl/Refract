@@ -45,7 +45,7 @@
     GROUP_GAP: 1.5,
     WAVE_CLEAR_BASE: 24,
     WAVE_CLEAR_PER_WAVE: 12,
-    HP_MULT_PER_WAVE: 0.2,
+    HP_MULT_PER_WAVE: 0.34,
     UNLOCK_WAVE: { splitter: 3, reflector: 4, lamp: 5 },
     SPEED_OPTIONS: [1, 2],
     /*
@@ -66,7 +66,7 @@
       mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, shield: 0,    gold: 4,   leak: 1,  radius: 0.28 },
       runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, shield: 0,    gold: 5,   leak: 1,  radius: 0.22 },
       swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, shield: 0,    gold: 1,   leak: 1,  radius: 0.14 },
-      bulwark:   { hp: 95,  speed: 0.55, absorb: 0.55, shield: 0.60, gold: 18,  leak: 2,  radius: 0.36 },
+      bulwark:   { hp: 80,  speed: 0.55, absorb: 0.55, shield: 0.60, gold: 18,  leak: 2,  radius: 0.36 },
       bruteking: { hp: 460, speed: 0.45, absorb: 0.70, shield: 0.60, gold: 50,  leak: 6,  radius: 0.50, boss: true },
       /*
        * Umbra advances behind its shield, then drops it for the rest of the
@@ -74,32 +74,37 @@
        * the armoured phase rewards reaching its back or bringing a return
        * pass, and the exposed phase rewards everything the player has built.
        */
-      umbra:     { hp: 430, speed: 0.55, absorb: 0.70, shield: 0.70, exposeAt: 0.45, gold: 100, leak: 10, radius: 0.56, boss: true }
+      umbra:     { hp: 330, speed: 0.55, absorb: 0.70, shield: 0.70, exposeAt: 0.45, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
     /*
      * Eight encounters. Each one either introduces a decision, combines ideas
-     * already taught, or pays one off. Each group is [type, count, gapSeconds];
-     * groups run in order with GROUP_GAP between them.
+     * already taught, or pays one off. Each group is
+     * [type, count, gapSeconds, mouth], where mouth 0 is the north entrance
+     * and mouth 1 is the west one; the mouth defaults to north when left off.
+     *
+     * The west mouth is not used until encounter 3, and the strip names it
+     * during planning before anything walks out of it. Bodies entering there
+     * skip the first sweep, so a network built only across the top misses them.
      *
      * 1 first light   one slow group; place a mirror and watch it burn.
-     * 2 absorption    a small clump that shields itself; then the first upgrade.
-     * 3 distribution  two clusters close together; one line cannot cover both.
+     * 2 absorption    a clump that shields itself; then the first upgrade.
+     * 3 two mouths    the west entrance opens and skips the top sweep.
      * 4 the shield    Bulwarks walk in facing the light; reflectors unlock.
-     * 5 fast and deep a swarm behind a Bulwark; lamps unlock, then the second
-     *                 upgrade choice.
+     * 5 fast and deep a swarm one way, a shield the other; lamps unlock,
+     *                 then the second upgrade choice.
      * 6 payoff        the specialisation chosen above gets to work.
-     * 7 everything    all four threats, and the last spending decision.
-     * 8 Umbra         armoured advance, then an exposed phase with escorts.
+     * 7 everything    all four threats through both mouths.
+     * 8 Umbra         the boss the long way, escorts through the short one.
      */
     WAVES: [
-      [ ['mote', 5, 1.2] ],
-      [ ['mote', 4, 0.5], ['mote', 5, 0.9] ],
-      [ ['runner', 4, 0.5], ['mote', 6, 0.7] ],
-      [ ['bulwark', 2, 2.0], ['mote', 5, 0.8] ],
-      [ ['bulwark', 1, 0], ['swarmling', 12, 0.25], ['runner', 5, 0.5] ],
-      [ ['bulwark', 2, 1.6], ['runner', 6, 0.45], ['mote', 5, 0.7] ],
-      [ ['swarmling', 12, 0.22], ['bulwark', 2, 1.4], ['runner', 6, 0.45], ['mote', 6, 0.6] ],
-      [ ['umbra', 1, 0], ['runner', 5, 0.6], ['bulwark', 1, 0], ['mote', 5, 0.7] ]
+      [ ['mote', 5, 1.2, 0] ],
+      [ ['mote', 4, 0.5, 0], ['mote', 5, 0.9, 0] ],
+      [ ['mote', 4, 0.8, 0], ['runner', 4, 0.6, 1] ],
+      [ ['bulwark', 2, 2.0, 0], ['mote', 5, 0.8, 1] ],
+      [ ['bulwark', 1, 0, 0], ['swarmling', 12, 0.25, 1], ['runner', 4, 0.5, 0] ],
+      [ ['bulwark', 2, 1.6, 1], ['runner', 5, 0.45, 0], ['mote', 4, 0.7, 1] ],
+      [ ['swarmling', 10, 0.22, 0], ['bulwark', 2, 1.4, 1], ['runner', 6, 0.45, 0], ['mote', 6, 0.6, 1] ],
+      [ ['umbra', 1, 0, 0], ['runner', 5, 0.6, 1], ['bulwark', 1, 0, 1], ['mote', 5, 0.7, 0] ]
     ],
     /*
      * After the encounters listed in UPGRADE_AFTER the run pauses and offers a
@@ -108,6 +113,7 @@
      * with itself. Focused Core and Twin Flames pull the same lever in
      * opposite directions and are mutually exclusive.
      */
+    SECOND_MOUTH_WAVE: 3,
     UPGRADE_AFTER: [2, 5],
     UPGRADE_OFFER: 3,
     UPGRADES: {
@@ -153,20 +159,35 @@
   R.PIECE_TYPES = ['mirror', 'splitter', 'reflector', 'lamp'];
 
   /*
-   * The fixed map "Switchback". Four long sweeps alternate direction down the
-   * board, joined by short connectors. Every long sweep has a buildable cell at
-   * both ends, so any of them can be lit from either direction, and columns 0
-   * and 7 are left open as trunks for chaining between them.
+   * The fixed map "Switchback", which has two mouths.
    *
-   * Enemies are spawned one cell above the portal and walk in.
+   * One road runs the length of the board: four long sweeps alternating
+   * direction, joined by short connectors, ending at the core. Every sweep has
+   * a buildable cell at both ends, so any of them can be lit from either
+   * direction, and columns 0 and 7 are left open as trunks for chaining
+   * between them.
+   *
+   * The second entrance is a side gate on the left edge at (0,3) that joins the
+   * road at (1,3), below the first sweep. Bodies coming in that way skip that
+   * whole sweep - seven cells of road - so a network built only across the top
+   * catches one stream and misses the other almost entirely. That is the
+   * decision the second entrance exists to create. It is placed on row 3
+   * rather than on a sweep row so that every sweep keeps a buildable cell at
+   * both ends.
+   *
+   * A fully separate second road was measured on this footprint and rejected:
+   * it consumed the routing corridors, and a greedy build search stopped
+   * choosing splitters and reflectors altogether. The reasoning and the
+   * numbers are in the build log.
+   *
+   * Enemies are spawned one cell above their own portal and walk in.
    */
   R.MAP = {
     name: 'Switchback',
-    spawn: [5, 0],
     core: [7, 11],
-    path: [
-      [5, 0], [5, 1], [5, 2],
-      [4, 2], [3, 2], [2, 2], [1, 2],
+    /* The shared body of the road, from the junction at (1,2) to the core. */
+    trunk: [
+      [1, 2],
       [1, 3], [1, 4],
       [2, 4], [3, 4], [4, 4], [5, 4], [6, 4],
       [6, 5], [6, 6],
@@ -176,6 +197,14 @@
       [6, 9], [6, 10],
       [7, 10],
       [7, 11]
+    ],
+    /*
+     * Each mouth is the cells it adds, plus the index in the trunk it joins
+     * at. The cell before the join has to be an orthogonal neighbour of it.
+     */
+    mouths: [
+      { name: 'north', spawn: [5, 0], lead: [[5, 0], [5, 1], [5, 2], [4, 2], [3, 2], [2, 2]], join: 0 },
+      { name: 'west', spawn: [0, 3], lead: [[0, 3]], join: 1 }
     ]
   };
 

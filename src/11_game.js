@@ -99,6 +99,7 @@
     var s = R.state;
     if (s.phase !== 'title') return;
     s.phase = 'building';
+    R.refreshSuggestion(s);
     R.emit(s, 'runstart', {});
   };
 
@@ -106,6 +107,7 @@
   R.restartRun = function (seed) {
     var s = R.newRun(seed);
     s.phase = 'building';
+    R.refreshSuggestion(s);
     R.emit(s, 'runstart', {});
     return s;
   };
@@ -125,6 +127,37 @@
     s.phase = won ? 'won' : 'lost';
     R.saveBest(s.score);
     R.emit(s, won ? 'win' : 'lose', { score: s.score, wave: s.wave });
+  };
+
+  /* ---------- the opening ---------- */
+
+  /*
+   * Before the first piece is placed, the board points at a tile that turns
+   * the beam along a road. It is chosen by asking the solver, not written
+   * down, so it stays right if the map or the tuning changes. The suggestion
+   * clears itself as soon as anything is placed.
+   */
+  R.refreshSuggestion = function (s) {
+    if (s.pieces.size > 0 || s.wave > 0) {
+      s.ui.suggest = null;
+      return null;
+    }
+    var best = null;
+    for (var c = 0; c < R.BALANCE.COLS; c++) {
+      for (var r = 0; r < R.BALANCE.ROWS; r++) {
+        if (R.pieces.placementProblem(s, 'mirror', c, r)) continue;
+        var orient = R.beam.bestOrientation(s, 'mirror', c, r);
+        var res = R.beam.preview(s, 'mirror', c, r, orient, null);
+        if (!res) continue;
+        var lit = 0;
+        for (var i = 0; i < res.lit.length; i++) {
+          if (res.lit[i] > 0 && (s.grid.kind[i] === R.ROAD || s.grid.kind[i] === R.SPAWN)) lit++;
+        }
+        if (!best || lit > best.lit) best = { c: c, r: r, lit: lit };
+      }
+    }
+    s.ui.suggest = best && best.lit > 1 ? { c: best.c, r: best.r } : null;
+    return s.ui.suggest;
   };
 
   /* ---------- run upgrades ---------- */
@@ -183,6 +216,17 @@
   R.startWave = function (s) {
     if (s.phase !== 'building') return;
     s.wave++;
+    /*
+     * A road is opened by the encounter that first uses it, and the strip has
+     * already named it during planning, so nothing ever walks out of a portal
+     * the player has not been shown.
+     */
+    var uses = R.enemies.routesFor(s.wave);
+    var needed = uses.length ? uses[uses.length - 1] + 1 : 1;
+    if (needed > s.routesOpen) {
+      s.routesOpen = Math.min(needed, s.routes.length);
+      R.emit(s, 'routeopen', { routes: s.routesOpen });
+    }
     s.spawnQueue = R.enemies.buildQueue(s.wave);
     s.spawnCursor = 0;
     s.waveEnemiesTotal = s.spawnQueue.length;

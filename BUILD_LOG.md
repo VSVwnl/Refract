@@ -14,7 +14,7 @@ Design (locked in the design session before any code existed; see `MASTER_SPEC.m
 
 - Concept: a tower defense with no towers. One beam of light from the defended Lumen Core; the player bends, splits and bounces it with placed pieces so it runs along the enemy road.
 - Genre floor: placeable defenses (Mirror, Splitter, Reflector, Lamp, upgradeable Core), eight escalating encounters plus endless, meaningful spend/upgrade decisions. All three present.
-- Board: 8 × 12 grid, one fixed map ("Switchback"), spawn near the top, core bottom-right, core beam fires north up column 7 and only touches one road cell by default. (Replaced "Stairway" in session 2; see that entry for the measurements.)
+- Board: 8 × 12 grid, one fixed map ("Switchback") with two entrances, core bottom-right, core beam fires north up column 7 and only touches one road cell by default. The north gate walks the whole road; the west side gate at (0,3) joins at (1,3) and skips the first sweep. (Replaced "Stairway" in session 2; second gate added in session 6.)
 - Central rule: enemies in a lit cell take beam power × dt; each enemy absorbs a fraction of the beam, so beam direction relative to enemy order matters.
 - Pieces: Mirror (90°), Splitter (pass + reflect at 50% each), Reflector (return at 60%), Lamp (second source at 50% of core power). Core levels 1–6.
 - Controls: tap palette → tap tile to place; tap piece → flip/move/sell; drag to move; undo within 3 s; portrait, touch-first, one active pointer.
@@ -1137,4 +1137,65 @@ All the section 15 targets hold: placing nothing loses on wave 3, the informed l
 **Evidence.** 26 Node tests pass. `build.js && check.js` pass. All 21 browser scenarios pass, plus a new `upgrades` scenario (29 checks: the offer shape at both points, that the run really is stopped while it is up, a with-and-without measurement for every one of the six, the Crossfire ratio, the Afterglow tail, mutual exclusion, and a clean reset). The release build served from `tools/static.js` plays to a win by tapping only, now including tapping the upgrade cards: eight encounters, 10 of 20 core HP, 187 s at 2x speed. `bots` still has three winners of ten, informed at 12 HP, first-timer reaching Umbra and losing at 4 HP, so the upgrades did not flatten the difficulty. Note the scripted bots take whichever upgrade is offered first, which is not good play; a person choosing deliberately should do better.
 
 **Still not implemented from revision 2:** the two previewed entry routes, the guided first-placement tutorial, reflector-as-amplifier, and the core-power dominance question. Unfamiliar-player testing has still not happened and nothing here is a claim about it.
+
+---
+
+## Session 6 - Two entrances, and the guided opening
+
+**Goal:** The two remaining implementable items from revision 2: a second previewed entry route, and a playable opening that teaches the first placement.
+
+### The second entrance, and a design decision taken on measurement
+
+Revision 2 asks for "two clearly marked entry routes" that "meet near the core", with a shared final segment too short to make parking at the core the universal answer. I built that literally first, as a new map called Crossroads: two fully separate roads down each side of the board, 19 and 16 cells, sharing only the last two cells, core at (4,11).
+
+It measured badly, and the numbers are the reason it was not shipped:
+
+- Two separate roads plus their entrances took the routing corridors with them. A greedy build search over five pieces chose **no splitter and no reflector at any budget**, on any toolset. Mirror-only and mirror+splitter produced byte-identical builds. Revision 2's own rule is that a tool with no competitive use should be changed rather than kept to tick a box, and this arrangement made two of the four useless.
+- The best single mirror reached 4 of 32 road cells, against 7 of 31 on Switchback, because the core trunk ran up the middle and every road run was vertical while every beam it could make was horizontal.
+- Shorter roads roughly halved exposure time. With speeds rescaled to compensate, four of ten strategies won, but two of the four tools were dead weight.
+
+So the second entrance was built onto the proven Switchback body instead: a side gate at (0,3) on the left edge, joining the road at (1,3). Bodies entering there skip the first sweep entirely - seven cells of road. Measured with one mirror lighting that first sweep: the north stream walks past **6 lit road cells, the west stream past 1**. A network built across the top catches one stream and misses the other, which is the decision the second entrance exists to create.
+
+Two placements were tried and rejected before that one:
+
+- Gate at (0,0) running down to join at (1,2). The lead sat on row 2, so the same beam that lit the first sweep also lit the gate, and the skip was worth nothing: both streams took identical damage in a controlled test.
+- Gate at (0,3) joining at (1,4). That put road on (0,4), which removed the buildable cell at the west end of the row 4 sweep and cost the map one of its "open at both ends" runs. Moving the join to (1,3) keeps every sweep open at both ends.
+
+The map data is now a shared `trunk` plus a list of `mouths`, each with the cells it adds and the index in the trunk it joins at. That shape made the third attempt a two-line change rather than another rewrite.
+
+**Honest limitation:** this is a weaker reading of the brief than two roads meeting near the core. The distribution decision it creates is real but modest - it is about the first sweep, not about two independent halves of the board. On an 8x12 footprint with four optical tools that need corridors, the measurements said that was the better trade. Recorded here rather than presented as the brief's design.
+
+### The guided opening
+
+`R.refreshSuggestion` asks the solver which single mirror lights the most road and marks that tile on the board with a pulsing outline. It is computed, not written down, so it stays correct if the map or tuning changes; it only appears before the first piece of a run; and it clears the moment anything is placed. Planning is already untimed, so nothing runs while a new player works it out. Measured: taking the suggestion moves coverage from 1 road cell to 7, and the first body down the road takes damage inside the first minute.
+
+### Balance, before to after, with the reason
+
+| Tunable | Before | After | Reason |
+| --- | --- | --- | --- |
+| map | one entrance | two | The second entrance adds a stream that skips the first sweep, so average exposure per body fell and nothing won until the curve was retuned. |
+| `HP_MULT_PER_WAVE` | 0.2 | 0.34 | With the second stream, 0.2 left the strongest build finishing untouched at 20 HP. 0.34 puts an informed win at 12 and keeps weak builds losing. |
+| `bulwark` hp | 95 | 80 | At 95 every Bulwark in the run leaked for every build tested; nothing won. |
+| `umbra` hp | 430 | 330 | Same measurement: the boss breached in nine of ten runs. |
+| `WAVE_CLEAR_BASE` / `PER_WAVE` | 24 / 12 | 26 / 16 | Income had to cover the extra pieces the second stream demands. |
+
+**What did not work, kept here rather than tidied away.**
+
+- The Crossroads map. Two days of the brief's literal design, measured and rejected; reasoning above.
+- Flattening `CORE_POWER` from [10,13,17,22,28,35] to [10,12,14,17,20,23] and [10,13,16,19,22,25], to address revision 2's warning about global power. Both curves made **every** strategy lose, including the strongest. The curve is load-bearing. The actual dominance test - a run that buys only core levels and places nothing - already loses at encounter 3, and a single mirror plus a maxed core also loses, so the failure mode the brief names is not present. Restored.
+- Reflector-as-amplifier, carried over from my own session 4 notes. Re-reading revision 2, its tool table specifies "a weaker return pass that attacks from the opposite direction" and its tuning seeds say "a 60% reflected return", which is exactly what is implemented. That item was mine, not the brief's, and is withdrawn.
+
+### Evidence
+
+- `node tools/test-beam.js` - 26 tests pass. `node tools/build.js && node tools/check.js` - pass.
+- All 23 browser scenarios pass at 390x844: layout 8, beam 23, waves 29, runstates 54, toolset 57, escalation 34, builds 4, teaching 37, mobile 32, landscape 9, handplay 3, feel 26, audio 23, bots 15, perf 17, acceptance 33, lattice 5, bossgate 9, shield 12, endings 11, upgrades 29, plus two new ones: `mouths` (17 checks) and `opening` (13 checks).
+- `lattice` still passes, so all four tools remain viable on the shipped map - the check that failed on Crossroads.
+- `bots`: nothing and core-only lose at encounter 3; a first-timer reaches Umbra and loses; informed wins at 12 HP; two of ten strategies win.
+- Screenshots checked by eye at 360x640: the suggestion marker sits on the trunk where the beam bends, the west gate is drawn dim until the encounter that opens it, and both gates are live and spawning afterwards.
+
+### Still not done
+
+- **No human playtesting.** Nothing in this log is a claim about how the game reads to someone new.
+- The second entrance is a side gate on a shared road, not two roads meeting near the core. Reasoning and measurements above.
+- Encounter 2's "demonstrate an improved route" and the 45-second shielded-formation lesson are carried by the existing hint and the encounter order, not by a scripted sequence.
 

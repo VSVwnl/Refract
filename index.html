@@ -906,7 +906,7 @@ body.wide #sideNote { display: block; }
     GROUP_GAP: 1.5,
     WAVE_CLEAR_BASE: 24,
     WAVE_CLEAR_PER_WAVE: 12,
-    HP_MULT_PER_WAVE: 0.2,
+    HP_MULT_PER_WAVE: 0.34,
     UNLOCK_WAVE: { splitter: 3, reflector: 4, lamp: 5 },
     SPEED_OPTIONS: [1, 2],
     /*
@@ -927,7 +927,7 @@ body.wide #sideNote { display: block; }
       mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, shield: 0,    gold: 4,   leak: 1,  radius: 0.28 },
       runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, shield: 0,    gold: 5,   leak: 1,  radius: 0.22 },
       swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, shield: 0,    gold: 1,   leak: 1,  radius: 0.14 },
-      bulwark:   { hp: 95,  speed: 0.55, absorb: 0.55, shield: 0.60, gold: 18,  leak: 2,  radius: 0.36 },
+      bulwark:   { hp: 80,  speed: 0.55, absorb: 0.55, shield: 0.60, gold: 18,  leak: 2,  radius: 0.36 },
       bruteking: { hp: 460, speed: 0.45, absorb: 0.70, shield: 0.60, gold: 50,  leak: 6,  radius: 0.50, boss: true },
       /*
        * Umbra advances behind its shield, then drops it for the rest of the
@@ -935,32 +935,37 @@ body.wide #sideNote { display: block; }
        * the armoured phase rewards reaching its back or bringing a return
        * pass, and the exposed phase rewards everything the player has built.
        */
-      umbra:     { hp: 430, speed: 0.55, absorb: 0.70, shield: 0.70, exposeAt: 0.45, gold: 100, leak: 10, radius: 0.56, boss: true }
+      umbra:     { hp: 330, speed: 0.55, absorb: 0.70, shield: 0.70, exposeAt: 0.45, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
     /*
      * Eight encounters. Each one either introduces a decision, combines ideas
-     * already taught, or pays one off. Each group is [type, count, gapSeconds];
-     * groups run in order with GROUP_GAP between them.
+     * already taught, or pays one off. Each group is
+     * [type, count, gapSeconds, mouth], where mouth 0 is the north entrance
+     * and mouth 1 is the west one; the mouth defaults to north when left off.
+     *
+     * The west mouth is not used until encounter 3, and the strip names it
+     * during planning before anything walks out of it. Bodies entering there
+     * skip the first sweep, so a network built only across the top misses them.
      *
      * 1 first light   one slow group; place a mirror and watch it burn.
-     * 2 absorption    a small clump that shields itself; then the first upgrade.
-     * 3 distribution  two clusters close together; one line cannot cover both.
+     * 2 absorption    a clump that shields itself; then the first upgrade.
+     * 3 two mouths    the west entrance opens and skips the top sweep.
      * 4 the shield    Bulwarks walk in facing the light; reflectors unlock.
-     * 5 fast and deep a swarm behind a Bulwark; lamps unlock, then the second
-     *                 upgrade choice.
+     * 5 fast and deep a swarm one way, a shield the other; lamps unlock,
+     *                 then the second upgrade choice.
      * 6 payoff        the specialisation chosen above gets to work.
-     * 7 everything    all four threats, and the last spending decision.
-     * 8 Umbra         armoured advance, then an exposed phase with escorts.
+     * 7 everything    all four threats through both mouths.
+     * 8 Umbra         the boss the long way, escorts through the short one.
      */
     WAVES: [
-      [ ['mote', 5, 1.2] ],
-      [ ['mote', 4, 0.5], ['mote', 5, 0.9] ],
-      [ ['runner', 4, 0.5], ['mote', 6, 0.7] ],
-      [ ['bulwark', 2, 2.0], ['mote', 5, 0.8] ],
-      [ ['bulwark', 1, 0], ['swarmling', 12, 0.25], ['runner', 5, 0.5] ],
-      [ ['bulwark', 2, 1.6], ['runner', 6, 0.45], ['mote', 5, 0.7] ],
-      [ ['swarmling', 12, 0.22], ['bulwark', 2, 1.4], ['runner', 6, 0.45], ['mote', 6, 0.6] ],
-      [ ['umbra', 1, 0], ['runner', 5, 0.6], ['bulwark', 1, 0], ['mote', 5, 0.7] ]
+      [ ['mote', 5, 1.2, 0] ],
+      [ ['mote', 4, 0.5, 0], ['mote', 5, 0.9, 0] ],
+      [ ['mote', 4, 0.8, 0], ['runner', 4, 0.6, 1] ],
+      [ ['bulwark', 2, 2.0, 0], ['mote', 5, 0.8, 1] ],
+      [ ['bulwark', 1, 0, 0], ['swarmling', 12, 0.25, 1], ['runner', 4, 0.5, 0] ],
+      [ ['bulwark', 2, 1.6, 1], ['runner', 5, 0.45, 0], ['mote', 4, 0.7, 1] ],
+      [ ['swarmling', 10, 0.22, 0], ['bulwark', 2, 1.4, 1], ['runner', 6, 0.45, 0], ['mote', 6, 0.6, 1] ],
+      [ ['umbra', 1, 0, 0], ['runner', 5, 0.6, 1], ['bulwark', 1, 0, 1], ['mote', 5, 0.7, 0] ]
     ],
     /*
      * After the encounters listed in UPGRADE_AFTER the run pauses and offers a
@@ -969,6 +974,7 @@ body.wide #sideNote { display: block; }
      * with itself. Focused Core and Twin Flames pull the same lever in
      * opposite directions and are mutually exclusive.
      */
+    SECOND_MOUTH_WAVE: 3,
     UPGRADE_AFTER: [2, 5],
     UPGRADE_OFFER: 3,
     UPGRADES: {
@@ -1014,20 +1020,35 @@ body.wide #sideNote { display: block; }
   R.PIECE_TYPES = ['mirror', 'splitter', 'reflector', 'lamp'];
 
   /*
-   * The fixed map "Switchback". Four long sweeps alternate direction down the
-   * board, joined by short connectors. Every long sweep has a buildable cell at
-   * both ends, so any of them can be lit from either direction, and columns 0
-   * and 7 are left open as trunks for chaining between them.
+   * The fixed map "Switchback", which has two mouths.
    *
-   * Enemies are spawned one cell above the portal and walk in.
+   * One road runs the length of the board: four long sweeps alternating
+   * direction, joined by short connectors, ending at the core. Every sweep has
+   * a buildable cell at both ends, so any of them can be lit from either
+   * direction, and columns 0 and 7 are left open as trunks for chaining
+   * between them.
+   *
+   * The second entrance is a side gate on the left edge at (0,3) that joins the
+   * road at (1,3), below the first sweep. Bodies coming in that way skip that
+   * whole sweep - seven cells of road - so a network built only across the top
+   * catches one stream and misses the other almost entirely. That is the
+   * decision the second entrance exists to create. It is placed on row 3
+   * rather than on a sweep row so that every sweep keeps a buildable cell at
+   * both ends.
+   *
+   * A fully separate second road was measured on this footprint and rejected:
+   * it consumed the routing corridors, and a greedy build search stopped
+   * choosing splitters and reflectors altogether. The reasoning and the
+   * numbers are in the build log.
+   *
+   * Enemies are spawned one cell above their own portal and walk in.
    */
   R.MAP = {
     name: 'Switchback',
-    spawn: [5, 0],
     core: [7, 11],
-    path: [
-      [5, 0], [5, 1], [5, 2],
-      [4, 2], [3, 2], [2, 2], [1, 2],
+    /* The shared body of the road, from the junction at (1,2) to the core. */
+    trunk: [
+      [1, 2],
       [1, 3], [1, 4],
       [2, 4], [3, 4], [4, 4], [5, 4], [6, 4],
       [6, 5], [6, 6],
@@ -1037,6 +1058,14 @@ body.wide #sideNote { display: block; }
       [6, 9], [6, 10],
       [7, 10],
       [7, 11]
+    ],
+    /*
+     * Each mouth is the cells it adds, plus the index in the trunk it joins
+     * at. The cell before the join has to be an orthogonal neighbour of it.
+     */
+    mouths: [
+      { name: 'north', spawn: [5, 0], lead: [[5, 0], [5, 1], [5, 2], [4, 2], [3, 2], [2, 2]], join: 0 },
+      { name: 'west', spawn: [0, 3], lead: [[0, 3]], join: 1 }
     ]
   };
 
@@ -1619,21 +1648,34 @@ body.wide #sideNote { display: block; }
     return false;
   };
 
-  /* Builds the cell-kind array and the ordered path for the fixed map. */
+  /*
+   * Builds the cell-kind array and one ordered path per road. Roads may share
+   * cells; a cell is road if any road uses it, and the core wins over both.
+   */
   R.buildBoard = function () {
     var cells = B.COLS * B.ROWS;
     var kind = new Uint8Array(cells);
-    var path = [];
-    var i;
-    for (i = 0; i < R.MAP.path.length; i++) {
-      var c = R.MAP.path[i][0];
-      var r = R.MAP.path[i][1];
-      path.push({ c: c, r: r, i: r * B.COLS + c });
-      kind[r * B.COLS + c] = R.ROAD;
+    var routes = [];
+
+    for (var n = 0; n < R.MAP.mouths.length; n++) {
+      var def = R.MAP.mouths[n];
+      var cells = def.lead.concat(R.MAP.trunk.slice(def.join || 0));
+      var path = [];
+      for (var i = 0; i < cells.length; i++) {
+        var c = cells[i][0];
+        var r = cells[i][1];
+        path.push({ c: c, r: r, i: r * B.COLS + c });
+        kind[r * B.COLS + c] = R.ROAD;
+      }
+      routes.push({ name: def.name, spawn: def.spawn.slice(), path: path });
     }
-    kind[R.MAP.spawn[1] * B.COLS + R.MAP.spawn[0]] = R.SPAWN;
+
+    for (n = 0; n < routes.length; n++) {
+      var sp = routes[n].spawn;
+      kind[sp[1] * B.COLS + sp[0]] = R.SPAWN;
+    }
     kind[R.MAP.core[1] * B.COLS + R.MAP.core[0]] = R.CORE;
-    return { kind: kind, path: path };
+    return { kind: kind, routes: routes };
   };
 
   /* Number of road cells the LIT counter is measured against. */
@@ -1669,7 +1711,9 @@ body.wide #sideNote { display: block; }
       wavesCleared: 0,
       grid: { cols: B.COLS, rows: B.ROWS, kind: board.kind },
       roadCells: R.roadCellCount(board.kind),
-      path: board.path,
+      routes: board.routes,
+      /* The road the player has been shown so far; the rest stay dark. */
+      routesOpen: 1,
       pieces: new Map(),
       nextPieceId: 1,
       routeVersion: 0,
@@ -1691,6 +1735,8 @@ body.wide #sideNote { display: block; }
         drag: null,
         hintsShown: {},
         helpOpen: false,
+        /* The tile the opening points at, until the first piece is placed. */
+        suggest: null,
         undo: null,
         lastResult: null
       },
@@ -2334,7 +2380,7 @@ body.wide #sideNote { display: block; }
     return pool.length ? pool.pop() : {
       id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0, shield: 0,
       gold: 0, leak: 0, radius: 0, boss: false, face: 0,
-      shield0: 0, exposeAt: 0, phase: 1,
+      shield0: 0, exposeAt: 0, phase: 1, route: 0,
       damage: 0, hitAt: -1, shieldedAt: -1, exposedAt: -1, crossfireAt: -1,
       dirMask: 0, peakHit: 0, glowUntil: -1, glowPower: 0,
       x: 0, z: 0, cell: -1, spawnAt: 0
@@ -2397,13 +2443,31 @@ body.wide #sideNote { display: block; }
       var type = groups[g][0];
       var count = groups[g][1];
       var gap = groups[g][2];
+      var route = groups[g][3] || 0;
       for (var i = 0; i < count; i++) {
-        queue.push({ type: type, at: t });
+        queue.push({ type: type, at: t, route: route });
         if (i < count - 1) t += gap;
       }
       t += B.GROUP_GAP;
     }
+    /*
+     * Groups are written one after another, but two roads run at once, so a
+     * queue that is already ordered by time reads correctly on both.
+     */
+    queue.sort(function (a, b) { return a.at - b.at; });
     return queue;
+  };
+
+  /* Which roads a wave uses, lowest first. */
+  en.routesFor = function (wave) {
+    var groups = en.groupsFor(wave);
+    var seen = [];
+    for (var g = 0; g < groups.length; g++) {
+      var route = groups[g][3] || 0;
+      if (seen.indexOf(route) < 0) seen.push(route);
+    }
+    seen.sort();
+    return seen;
   };
 
   /* Composition summary for the incoming strip, in spawn order. */
@@ -2423,6 +2487,22 @@ body.wide #sideNote { display: block; }
    * formation, never the player's layout, so the preview cannot be accused of
    * reacting to what has been built.
    */
+  /*
+   * Names an entrance the next encounter uses that has not been used before,
+   * or null. The strip shows this during planning, so a road never opens
+   * without the player having been told about it first.
+   */
+  en.newMouthNote = function (s, wave) {
+    var uses = en.routesFor(wave);
+    for (var i = 0; i < uses.length; i++) {
+      if (uses[i] >= s.routesOpen) {
+        var road = s.routes[uses[i]];
+        return 'the ' + road.name + ' gate opens';
+      }
+    }
+    return null;
+  };
+
   en.threatNote = function (wave) {
     var comp = en.composition(wave);
     var has = {};
@@ -2439,11 +2519,13 @@ body.wide #sideNote { display: block; }
 
   /* ---------- spawning ---------- */
 
-  en.spawn = function (s, type) {
+  en.spawn = function (s, type, route) {
     var def = B.ENEMY[type];
     var e = acquire();
     e.id = s.nextEnemyId++;
     e.type = type;
+    e.route = route || 0;
+    if (e.route >= s.routes.length) e.route = 0;
     e.maxHp = def.boss ? def.hp : Math.round(def.hp * en.hpMult(s.wave));
     e.hp = e.maxHp;
     e.t = -1;
@@ -2471,7 +2553,7 @@ body.wide #sideNote { display: block; }
     e.spawnAt = s.time;
     positionOf(s, e);
     s.enemies.push(e);
-    R.emit(s, 'spawn', { enemy: type, id: e.id });
+    R.emit(s, 'spawn', { enemy: type, id: e.id, route: e.route });
     return e;
   };
 
@@ -2481,31 +2563,38 @@ body.wide #sideNote { display: block; }
    * Enemies walk from a virtual cell one row above the portal. Below t = -0.5
    * they are still off the board and cannot be hit.
    */
-  function pathPoint(s, index, out) {
+  function pathPoint(s, route, index, out) {
+    var road = s.routes[route];
     if (index < 0) {
-      out.x = R.grid.worldX(R.MAP.spawn[0]);
-      out.z = R.grid.worldZ(R.MAP.spawn[1]) - 1;
+      out.x = R.grid.worldX(road.spawn[0]);
+      out.z = R.grid.worldZ(road.spawn[1]) - 1;
     } else {
-      var p = s.path[Math.min(index, s.path.length - 1)];
+      var p = road.path[Math.min(index, road.path.length - 1)];
       out.x = R.grid.worldX(p.c);
       out.z = R.grid.worldZ(p.r);
     }
     return out;
   }
 
+  /* The last index on a road, which is the core. */
+  en.endOf = function (s, route) {
+    return s.routes[route].path.length - 1;
+  };
+
   var pa = { x: 0, z: 0 };
   var pb = { x: 0, z: 0 };
 
   function positionOf(s, e) {
+    var road = s.routes[e.route];
     var k = Math.floor(e.t);
     var frac = e.t - k;
-    pathPoint(s, k, pa);
-    pathPoint(s, k + 1, pb);
+    pathPoint(s, e.route, k, pa);
+    pathPoint(s, e.route, k + 1, pb);
     e.x = pa.x + (pb.x - pa.x) * frac;
     e.z = pa.z + (pb.z - pa.z) * frac;
     var idx = Math.round(e.t);
     if (idx < 0) e.cell = -1;
-    else e.cell = s.path[Math.min(idx, s.path.length - 1)].i;
+    else e.cell = road.path[Math.min(idx, road.path.length - 1)].i;
     e.face = facing(pa, pb, e.face);
   }
 
@@ -2555,16 +2644,16 @@ body.wide #sideNote { display: block; }
   en.spawnStep = function (s, dt) {
     if (s.phase !== 'wave') return;
     while (s.spawnCursor < s.spawnQueue.length && s.spawnQueue[s.spawnCursor].at <= s.waveTime) {
-      en.spawn(s, s.spawnQueue[s.spawnCursor].type);
+      en.spawn(s, s.spawnQueue[s.spawnCursor].type, s.spawnQueue[s.spawnCursor].route);
       s.spawnCursor++;
     }
   };
 
   en.moveStep = function (s, dt) {
     var list = s.enemies;
-    var last = s.path.length - 1;
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
+      var last = en.endOf(s, e.route);
       e.t += e.speed * dt;
       positionOf(s, e);
       /*
@@ -2595,7 +2684,6 @@ body.wide #sideNote { display: block; }
    */
   en.resolveStep = function (s, dt) {
     var list = s.enemies;
-    var end = s.path.length - 1;
     var step = dt || 0;
     var crossfire = R.upgradeValue(s, 'crossfire', 'bonus', 0);
     var glowSeconds = R.upgradeValue(s, 'afterglow', 'seconds', 0);
@@ -2638,7 +2726,7 @@ body.wide #sideNote { display: block; }
         pool.push(e);
         continue;
       }
-      if (e.t >= end) {
+      if (e.t >= en.endOf(s, e.route)) {
         list.splice(i, 1);
         s.coreHp -= e.leak;
         s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;
@@ -2769,6 +2857,8 @@ body.wide #sideNote { display: block; }
     if (type === 'lamp') s.lampsPlaced++;
     s.ui.undo = { pieceId: piece.id, until: s.time + B.UNDO_WINDOW, refund: cost };
 
+    /* The opening has been answered; stop pointing. */
+    s.ui.suggest = null;
     R.beam.recompute(s);
     R.emit(s, 'place', { id: piece.id, piece: type, c: c, r: r, cost: cost });
     return piece;
@@ -3123,8 +3213,12 @@ body.wide #sideNote { display: block; }
     scene.add(roads);
     tileMeshes.road = roads;
 
-    /* Direction chevrons on the road, pointing the way the enemies walk. */
-    var path = state.path;
+    /* Direction chevrons on every road, pointing the way the enemies walk. */
+    var steps = [];
+    for (var rt = 0; rt < state.routes.length; rt++) {
+      var rp = state.routes[rt].path;
+      for (var si = 0; si < rp.length - 1; si++) steps.push([rp[si], rp[si + 1]]);
+    }
     var chevGeo = new THREE.PlaneGeometry(0.62, 0.62);
     var chevMat = new THREE.MeshBasicMaterial({
       map: rd.tex.chevron,
@@ -3134,10 +3228,10 @@ body.wide #sideNote { display: block; }
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
-    var chevrons = new THREE.InstancedMesh(chevGeo, chevMat, path.length - 1);
-    for (i = 0; i < path.length - 1; i++) {
-      var a = path[i];
-      var b2 = path[i + 1];
+    var chevrons = new THREE.InstancedMesh(chevGeo, chevMat, steps.length);
+    for (i = 0; i < steps.length; i++) {
+      var a = steps[i][0];
+      var b2 = steps[i][1];
       var ang = Math.atan2(b2.c - a.c, -(b2.r - a.r));
       dummy.position.set(R.grid.worldX(a.c), 0.012, R.grid.worldZ(a.r));
       dummy.rotation.set(-Math.PI / 2, 0, -ang);
@@ -3149,30 +3243,39 @@ body.wide #sideNote { display: block; }
     scene.add(chevrons);
     tileMeshes.chevrons = chevrons;
 
-    /* Spawn portal. */
-    var portal = new THREE.Group();
-    portal.position.set(R.grid.worldX(R.MAP.spawn[0]), 0.015, R.grid.worldZ(R.MAP.spawn[1]));
-    var disc = new THREE.Mesh(
-      new THREE.CircleGeometry(0.42, 24),
-      new THREE.MeshBasicMaterial({ color: 0x140a22 })
-    );
-    disc.rotation.x = -Math.PI / 2;
-    portal.add(disc);
-    var ring = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.94, 0.94),
-      new THREE.MeshBasicMaterial({
-        map: rd.tex.ring,
-        color: 0x9b4dff,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
-      })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.01;
-    portal.add(ring);
-    scene.add(portal);
-    rd.portalRing = ring;
+    /*
+     * One portal per road. A road the player has not been shown yet is drawn
+     * faintly rather than hidden, so the second entrance is somewhere on the
+     * board before anything ever walks out of it.
+     */
+    rd.portalRings = [];
+    for (var pi = 0; pi < state.routes.length; pi++) {
+      var sp = state.routes[pi].spawn;
+      var portal = new THREE.Group();
+      portal.position.set(R.grid.worldX(sp[0]), 0.015, R.grid.worldZ(sp[1]));
+      var disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.42, 24),
+        new THREE.MeshBasicMaterial({ color: 0x140a22 })
+      );
+      disc.rotation.x = -Math.PI / 2;
+      portal.add(disc);
+      var ring = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.94, 0.94),
+        new THREE.MeshBasicMaterial({
+          map: rd.tex.ring,
+          color: 0x9b4dff,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending
+        })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.01;
+      portal.add(ring);
+      scene.add(portal);
+      rd.portalRings.push(ring);
+    }
+    rd.portalRing = rd.portalRings[0];
 
     /* The Lumen Core: pedestal, crystal and a glow disc on the floor. */
     var core = new THREE.Group();
@@ -3421,6 +3524,8 @@ body.wide #sideNote { display: block; }
     var quad = new THREE.PlaneGeometry(1, 1);
 
     dyn.litGlow = makeInstanced(quad, additiveMaterial(rd.tex.tileGlow, 0xffffff), CELLS, 1);
+    /* One tile marker, used to point at a suggested first placement. */
+    dyn.suggest = makeInstanced(quad, additiveMaterial(rd.tex.tileGlow, 0xffffff), 1, 1);
     dyn.beamGlow = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 2);
     dyn.beamCore = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 3);
     dyn.bounce = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), 32, 4);
@@ -3606,6 +3711,22 @@ body.wide #sideNote { display: block; }
 
   var previewKey = '';
   var previewResult = null;
+
+  /*
+   * A pulsing marker over the tile the opening suggests. It is only ever set
+   * for a player who has not placed anything yet, and it goes out the moment
+   * they do, so it points once and then leaves them alone.
+   */
+  function drawSuggestion(state) {
+    var f = new Filler(dyn.suggest);
+    var cell = state.ui.suggest;
+    if (cell) {
+      var pulse = 0.45 + 0.35 * Math.sin(state.time * 4.5);
+      f.push(R.grid.worldX(cell.c), LIT_Y + 0.02, R.grid.worldZ(cell.r), 0, 1.02, 1.02,
+        R.util.mixColor(0x000000, C.valid, pulse));
+    }
+    f.finish();
+  }
 
   function drawPreview(state) {
     var d = state.ui.drag;
@@ -4299,6 +4420,7 @@ body.wide #sideNote { display: block; }
     stepParticles(dt);
     drawLitTiles(state);
     drawBeams(state);
+    drawSuggestion(state);
     drawPreview(state);
     drawPieces(state);
     drawEnemies(state);
@@ -4323,12 +4445,20 @@ body.wide #sideNote { display: block; }
       rd.coreCrystal.scale.set(s, s, s);
       rd.coreHaze.material.opacity = 0.32 + 0.05 * lvl + 0.06 * Math.sin(t * 2.4);
     }
-    if (rd.portalRing) {
-      rd.portalRing.rotation.z -= dtReal * 0.5;
+    if (rd.portalRings) {
       if (feel.portalFlare > 0) feel.portalFlare = Math.max(0, feel.portalFlare - dtReal * 1.6);
-      var ps = 1 + feel.portalFlare * 0.8;
-      rd.portalRing.scale.set(ps, ps, 1);
-      rd.portalRing.material.color.setHex(R.util.mixColor(0x9b4dff, 0xffffff, feel.portalFlare));
+      for (var pr = 0; pr < rd.portalRings.length; pr++) {
+        var pring = rd.portalRings[pr];
+        /* A road that has not opened yet turns slowly and stays dim. */
+        var open = pr < state.routesOpen;
+        pring.rotation.z -= dtReal * (open ? 0.5 : 0.12);
+        var ps = open ? 1 + feel.portalFlare * 0.8 : 0.7;
+        pring.scale.set(ps, ps, 1);
+        pring.material.opacity = open ? 1 : 0.28;
+        pring.material.color.setHex(open
+          ? R.util.mixColor(0x9b4dff, 0xffffff, feel.portalFlare)
+          : 0x4a3070);
+      }
     }
 
     rd.drawDynamic(state, dtReal);
@@ -4524,8 +4654,12 @@ body.wide #sideNote { display: block; }
         R.enemies.remaining(s) + ' left';
     }
     var next = s.wave + 1;
-    return 'NEXT ' + pips(R.enemies.composition(next)) +
-      '&middot; <span class="em">' + R.enemies.threatNote(next) + '</span>';
+    var mouth = R.enemies.newMouthNote(s, next);
+    /* A new entrance outranks the threat description: it changes the board. */
+    var note = mouth
+      ? '<span class="warn">' + mouth.toUpperCase() + '</span>'
+      : '<span class="em">' + R.enemies.threatNote(next) + '</span>';
+    return 'NEXT ' + pips(R.enemies.composition(next)) + '&middot; ' + note;
   }
 
   /* ---------- HUD ---------- */
@@ -5095,7 +5229,7 @@ body.wide #sideNote { display: block; }
   var hintKey = null;
 
   var HINTS = {
-    start: 'Tap a tile on the beam to bend it along the road.',
+    start: 'Tap the marked tile to bend the beam along the road.',
     placed: 'Tap a placed piece to flip, move or sell it.',
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
     bulwark: 'A Bulwark shields the face it walks towards. Hit its flank or its back.',
@@ -5683,6 +5817,7 @@ body.wide #sideNote { display: block; }
     var s = R.state;
     if (s.phase !== 'title') return;
     s.phase = 'building';
+    R.refreshSuggestion(s);
     R.emit(s, 'runstart', {});
   };
 
@@ -5690,6 +5825,7 @@ body.wide #sideNote { display: block; }
   R.restartRun = function (seed) {
     var s = R.newRun(seed);
     s.phase = 'building';
+    R.refreshSuggestion(s);
     R.emit(s, 'runstart', {});
     return s;
   };
@@ -5709,6 +5845,37 @@ body.wide #sideNote { display: block; }
     s.phase = won ? 'won' : 'lost';
     R.saveBest(s.score);
     R.emit(s, won ? 'win' : 'lose', { score: s.score, wave: s.wave });
+  };
+
+  /* ---------- the opening ---------- */
+
+  /*
+   * Before the first piece is placed, the board points at a tile that turns
+   * the beam along a road. It is chosen by asking the solver, not written
+   * down, so it stays right if the map or the tuning changes. The suggestion
+   * clears itself as soon as anything is placed.
+   */
+  R.refreshSuggestion = function (s) {
+    if (s.pieces.size > 0 || s.wave > 0) {
+      s.ui.suggest = null;
+      return null;
+    }
+    var best = null;
+    for (var c = 0; c < R.BALANCE.COLS; c++) {
+      for (var r = 0; r < R.BALANCE.ROWS; r++) {
+        if (R.pieces.placementProblem(s, 'mirror', c, r)) continue;
+        var orient = R.beam.bestOrientation(s, 'mirror', c, r);
+        var res = R.beam.preview(s, 'mirror', c, r, orient, null);
+        if (!res) continue;
+        var lit = 0;
+        for (var i = 0; i < res.lit.length; i++) {
+          if (res.lit[i] > 0 && (s.grid.kind[i] === R.ROAD || s.grid.kind[i] === R.SPAWN)) lit++;
+        }
+        if (!best || lit > best.lit) best = { c: c, r: r, lit: lit };
+      }
+    }
+    s.ui.suggest = best && best.lit > 1 ? { c: best.c, r: best.r } : null;
+    return s.ui.suggest;
   };
 
   /* ---------- run upgrades ---------- */
@@ -5767,6 +5934,17 @@ body.wide #sideNote { display: block; }
   R.startWave = function (s) {
     if (s.phase !== 'building') return;
     s.wave++;
+    /*
+     * A road is opened by the encounter that first uses it, and the strip has
+     * already named it during planning, so nothing ever walks out of a portal
+     * the player has not been shown.
+     */
+    var uses = R.enemies.routesFor(s.wave);
+    var needed = uses.length ? uses[uses.length - 1] + 1 : 1;
+    if (needed > s.routesOpen) {
+      s.routesOpen = Math.min(needed, s.routes.length);
+      R.emit(s, 'routeopen', { routes: s.routesOpen });
+    }
     s.spawnQueue = R.enemies.buildQueue(s.wave);
     s.spawnCursor = 0;
     s.waveEnemiesTotal = s.spawnQueue.length;

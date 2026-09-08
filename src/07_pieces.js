@@ -91,6 +91,8 @@
     if (type === 'lamp') s.lampsPlaced++;
     s.ui.undo = { pieceId: piece.id, until: s.time + B.UNDO_WINDOW, refund: cost };
 
+    /* The opening has been answered; stop pointing. */
+    s.ui.suggest = null;
     R.beam.recompute(s);
     R.emit(s, 'place', { id: piece.id, piece: type, c: c, r: r, cost: cost });
     return piece;

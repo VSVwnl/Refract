@@ -129,8 +129,8 @@ test('a mirror ring that leads back to its first mirror terminates', function ()
   const s = fresh();
   put(s, 'mirror', 7, 9, 1);
   put(s, 'mirror', 0, 9, 1);
-  put(s, 'mirror', 0, 1, 0);
-  put(s, 'mirror', 7, 1, 1);
+  put(s, 'mirror', 0, 5, 0);
+  put(s, 'mirror', 7, 5, 1);
   ok(s.beam.segCount < B.MAX_SEGMENTS, 'segment count stayed under the cap');
   ok(!s.beam.overflow, 'no overflow');
   const seen = {};

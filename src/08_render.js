@@ -189,8 +189,12 @@
     scene.add(roads);
     tileMeshes.road = roads;
 
-    /* Direction chevrons on the road, pointing the way the enemies walk. */
-    var path = state.path;
+    /* Direction chevrons on every road, pointing the way the enemies walk. */
+    var steps = [];
+    for (var rt = 0; rt < state.routes.length; rt++) {
+      var rp = state.routes[rt].path;
+      for (var si = 0; si < rp.length - 1; si++) steps.push([rp[si], rp[si + 1]]);
+    }
     var chevGeo = new THREE.PlaneGeometry(0.62, 0.62);
     var chevMat = new THREE.MeshBasicMaterial({
       map: rd.tex.chevron,
@@ -200,10 +204,10 @@
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
-    var chevrons = new THREE.InstancedMesh(chevGeo, chevMat, path.length - 1);
-    for (i = 0; i < path.length - 1; i++) {
-      var a = path[i];
-      var b2 = path[i + 1];
+    var chevrons = new THREE.InstancedMesh(chevGeo, chevMat, steps.length);
+    for (i = 0; i < steps.length; i++) {
+      var a = steps[i][0];
+      var b2 = steps[i][1];
       var ang = Math.atan2(b2.c - a.c, -(b2.r - a.r));
       dummy.position.set(R.grid.worldX(a.c), 0.012, R.grid.worldZ(a.r));
       dummy.rotation.set(-Math.PI / 2, 0, -ang);
@@ -215,30 +219,39 @@
     scene.add(chevrons);
     tileMeshes.chevrons = chevrons;
 
-    /* Spawn portal. */
-    var portal = new THREE.Group();
-    portal.position.set(R.grid.worldX(R.MAP.spawn[0]), 0.015, R.grid.worldZ(R.MAP.spawn[1]));
-    var disc = new THREE.Mesh(
-      new THREE.CircleGeometry(0.42, 24),
-      new THREE.MeshBasicMaterial({ color: 0x140a22 })
-    );
-    disc.rotation.x = -Math.PI / 2;
-    portal.add(disc);
-    var ring = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.94, 0.94),
-      new THREE.MeshBasicMaterial({
-        map: rd.tex.ring,
-        color: 0x9b4dff,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
-      })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.01;
-    portal.add(ring);
-    scene.add(portal);
-    rd.portalRing = ring;
+    /*
+     * One portal per road. A road the player has not been shown yet is drawn
+     * faintly rather than hidden, so the second entrance is somewhere on the
+     * board before anything ever walks out of it.
+     */
+    rd.portalRings = [];
+    for (var pi = 0; pi < state.routes.length; pi++) {
+      var sp = state.routes[pi].spawn;
+      var portal = new THREE.Group();
+      portal.position.set(R.grid.worldX(sp[0]), 0.015, R.grid.worldZ(sp[1]));
+      var disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.42, 24),
+        new THREE.MeshBasicMaterial({ color: 0x140a22 })
+      );
+      disc.rotation.x = -Math.PI / 2;
+      portal.add(disc);
+      var ring = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.94, 0.94),
+        new THREE.MeshBasicMaterial({
+          map: rd.tex.ring,
+          color: 0x9b4dff,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending
+        })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.01;
+      portal.add(ring);
+      scene.add(portal);
+      rd.portalRings.push(ring);
+    }
+    rd.portalRing = rd.portalRings[0];
 
     /* The Lumen Core: pedestal, crystal and a glow disc on the floor. */
     var core = new THREE.Group();
@@ -487,6 +500,8 @@
     var quad = new THREE.PlaneGeometry(1, 1);
 
     dyn.litGlow = makeInstanced(quad, additiveMaterial(rd.tex.tileGlow, 0xffffff), CELLS, 1);
+    /* One tile marker, used to point at a suggested first placement. */
+    dyn.suggest = makeInstanced(quad, additiveMaterial(rd.tex.tileGlow, 0xffffff), 1, 1);
     dyn.beamGlow = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 2);
     dyn.beamCore = makeInstanced(quad, additiveMaterial(rd.tex.beam, 0xffffff), B.MAX_SEGMENTS, 3);
     dyn.bounce = makeInstanced(quad, additiveMaterial(rd.tex.glow, 0xffffff), 32, 4);
@@ -672,6 +687,22 @@
 
   var previewKey = '';
   var previewResult = null;
+
+  /*
+   * A pulsing marker over the tile the opening suggests. It is only ever set
+   * for a player who has not placed anything yet, and it goes out the moment
+   * they do, so it points once and then leaves them alone.
+   */
+  function drawSuggestion(state) {
+    var f = new Filler(dyn.suggest);
+    var cell = state.ui.suggest;
+    if (cell) {
+      var pulse = 0.45 + 0.35 * Math.sin(state.time * 4.5);
+      f.push(R.grid.worldX(cell.c), LIT_Y + 0.02, R.grid.worldZ(cell.r), 0, 1.02, 1.02,
+        R.util.mixColor(0x000000, C.valid, pulse));
+    }
+    f.finish();
+  }
 
   function drawPreview(state) {
     var d = state.ui.drag;
@@ -1365,6 +1396,7 @@
     stepParticles(dt);
     drawLitTiles(state);
     drawBeams(state);
+    drawSuggestion(state);
     drawPreview(state);
     drawPieces(state);
     drawEnemies(state);
@@ -1389,12 +1421,20 @@
       rd.coreCrystal.scale.set(s, s, s);
       rd.coreHaze.material.opacity = 0.32 + 0.05 * lvl + 0.06 * Math.sin(t * 2.4);
     }
-    if (rd.portalRing) {
-      rd.portalRing.rotation.z -= dtReal * 0.5;
+    if (rd.portalRings) {
       if (feel.portalFlare > 0) feel.portalFlare = Math.max(0, feel.portalFlare - dtReal * 1.6);
-      var ps = 1 + feel.portalFlare * 0.8;
-      rd.portalRing.scale.set(ps, ps, 1);
-      rd.portalRing.material.color.setHex(R.util.mixColor(0x9b4dff, 0xffffff, feel.portalFlare));
+      for (var pr = 0; pr < rd.portalRings.length; pr++) {
+        var pring = rd.portalRings[pr];
+        /* A road that has not opened yet turns slowly and stays dim. */
+        var open = pr < state.routesOpen;
+        pring.rotation.z -= dtReal * (open ? 0.5 : 0.12);
+        var ps = open ? 1 + feel.portalFlare * 0.8 : 0.7;
+        pring.scale.set(ps, ps, 1);
+        pring.material.opacity = open ? 1 : 0.28;
+        pring.material.color.setHex(open
+          ? R.util.mixColor(0x9b4dff, 0xffffff, feel.portalFlare)
+          : 0x4a3070);
+      }
     }
 
     rd.drawDynamic(state, dtReal);

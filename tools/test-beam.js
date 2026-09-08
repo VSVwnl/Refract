@@ -54,20 +54,35 @@ module.exports = { test: test, eq: eq, near: near, ok: ok };
 
 /* ---------- grid and map ---------- */
 
-test('board has 31 road cells and a 32 cell path', function () {
+test('the board has two roads that share one body and one core', function () {
   const s = R.resetState(1);
-  eq(s.roadCells, 31, 'road cells');
-  eq(s.path.length, 32, 'path length');
+  eq(s.roadCells, 32, 'road cells');
+  eq(s.routes.length, 2, 'two roads');
+  eq(s.routes[0].path.length, 32, 'the north road');
+  eq(s.routes[1].path.length, 26, 'the west road, which skips the first sweep');
   eq(s.grid.kind[R.grid.idx(7, 11)], R.CORE, 'core kind');
-  eq(s.grid.kind[R.grid.idx(5, 0)], R.SPAWN, 'spawn kind');
+  s.routes.forEach(function (rt) {
+    eq(s.grid.kind[R.grid.idx(rt.spawn[0], rt.spawn[1])], R.SPAWN, rt.name + ' spawn kind');
+    const last = rt.path[rt.path.length - 1];
+    eq(last.c + ',' + last.r, '7,11', rt.name + ' ends at the core');
+  });
+  /* The two roads join once and never separate again. */
+  const north = s.routes[0].path.map(function (p) { return p.c + ',' + p.r; });
+  const west = s.routes[1].path.map(function (p) { return p.c + ',' + p.r; });
+  const join = west.findIndex(function (k) { return north.indexOf(k) >= 0; });
+  ok(join > 0, 'the west road runs alone before it joins');
+  eq(west.slice(join).join(' '), north.slice(north.indexOf(west[join])).join(' '),
+    'and follows the same body from the junction on');
 });
 
-test('path steps are always to an orthogonal neighbour', function () {
+test('every road steps to an orthogonal neighbour', function () {
   const s = R.resetState(1);
-  for (let i = 1; i < s.path.length; i++) {
-    const d = Math.abs(s.path[i].c - s.path[i - 1].c) + Math.abs(s.path[i].r - s.path[i - 1].r);
-    eq(d, 1, 'step ' + i);
-  }
+  s.routes.forEach(function (rt) {
+    for (let i = 1; i < rt.path.length; i++) {
+      const d = Math.abs(rt.path[i].c - rt.path[i - 1].c) + Math.abs(rt.path[i].r - rt.path[i - 1].r);
+      eq(d, 1, rt.name + ' step ' + i);
+    }
+  });
 });
 
 test('reflection table matches the eight documented cases', function () {
