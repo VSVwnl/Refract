@@ -13,12 +13,15 @@ This is a running record kept during the build. Part 1 lists the decisions curre
 Design (locked in the design session before any code existed; see `MASTER_SPEC.md` for detail):
 
 - Concept: a tower defense with no towers. One beam of light from the defended Lumen Core; the player bends, splits and bounces it with placed pieces so it runs along the enemy road.
-- Genre floor: placeable defenses (Mirror, Splitter, Reflector, Lamp, upgradeable Core), escalating waves, meaningful spend/upgrade decisions. All three present.
+- Genre floor: placeable defenses (Mirror, Splitter, Reflector, Lamp, upgradeable Core), eight escalating encounters plus endless, meaningful spend/upgrade decisions. All three present.
 - Board: 8 × 12 grid, one fixed map ("Switchback"), spawn near the top, core bottom-right, core beam fires north up column 7 and only touches one road cell by default. (Replaced "Stairway" in session 2; see that entry for the measurements.)
 - Central rule: enemies in a lit cell take beam power × dt; each enemy absorbs a fraction of the beam, so beam direction relative to enemy order matters.
 - Pieces: Mirror (90°), Splitter (pass + reflect at 50% each), Reflector (return at 60%), Lamp (second source at 50% of core power). Core levels 1–6.
 - Controls: tap palette → tap tile to place; tap piece → flip/move/sell; drag to move; undo within 3 s; portrait, touch-first, one active pointer.
-- Session: about 4 to 6 minutes at normal speed; win/lose/reset; endless after victory; score with best score.
+- Session: eight encounters, about 5 to 6 minutes at normal speed; win/lose/reset; endless after victory; score with best score.
+- Planning is untimed. Combat is paused between encounters until the player taps START WAVE; there is no countdown and no reward for starting early. Moving, turning and selling pieces during planning is free and refunds the price paid; mid-combat a moved piece goes dark for 0.3 s and a sale returns the sell rate.
+- Enemies: Mote, Runner, Swarmling, Bulwark, Brute King, Umbra. Absorption (how much light a body removes from what continues past it) and shielding (how much damage is deflected when light meets the face it walks towards) are separate constants.
+- Umbra advances shielded, then drops the shield at 45 percent of the road for the rest of the walk. About 56 s on the road.
 - Terminal rules: the run is won only by destroying Umbra. A boss that reaches the core loses the run outright, whatever core HP is left.
 - Scope: one map, four pieces, six enemy types incl. two bosses, no meta-progression, no menus beyond title/help/results.
 - Art: Three.js primitives only, procedural canvas textures, DOM HUD, no image/audio/font files. Legibility first.
@@ -1042,4 +1045,63 @@ All the section 15 targets hold: placing nothing loses on wave 3, the informed l
 **Superseded during the session.** Revision 2 of the brief arrived while this pass was being tested. It supersedes revision 1 and reverses one item built here: revision 1 required the static three-mirror layout to lose, revision 2 says explicitly not to punish a stable defense merely because it is stable. The `bossgate` assertion encoding that rule is recorded as needing revision in session 5.
 
 **Result:** All browser scenarios that can run in this environment pass. A full session measures 222-232s simulated, about 4.7 minutes of real play. This is a working checkpoint, committed before starting the revision 2 work.
+
+---
+
+## Session 5 - Revision 2 of the brief
+
+**Input:** `GPT_Advice.docx` revision 2, dated 8 September 2026, which supersedes revision 1. It is a substantially larger brief: eight encounters, two previewed entry routes, a directional-shield enemy, two upgrade choices, a two-phase boss, an untimed planning phase and an integrated tutorial. It also reverses one thing session 4 built: revision 1 required the static three-mirror layout to lose, revision 2 says explicitly not to punish a stable defence for being stable, and asks that the improvement from adapting be demonstrated before the boss rather than by the boss-escape rule alone.
+
+**Implemented in this pass.**
+
+*Planning is untimed.* The countdown is gone. `simStep` no longer advances anything during `building`; `R.startWave` is the only way into an encounter and the action button reads START WAVE n. The early-call gold bonus is removed entirely, so reading the board slowly costs nothing and starting quickly earns nothing. `R.pieces.isPlanning` gates the two forgiving rules: a piece moved during planning is never inactive, and selling during planning returns the price that piece was actually paid for. Mid-combat, a moved piece goes dark for `MOVE_REFORM` and a sale returns `SELL_RATE`. The refund is always the price paid, so the rising lamp price cannot be arbitraged.
+
+*Eight encounters* replacing five, in the learning order the brief sets out: one lesson at a time, shields introduced at encounter 4 and never shown before it, everything combined at 7, Umbra at 8.
+
+*Bulwark, with directional shielding.* Brute is renamed and reworked. Two constants now govern a body: `absorb`, how much of the beam it removes from what continues behind it, and `shield`, how much damage is deflected when light meets the face it is walking towards. Light reaching a flank or a back is not reduced at all. Facing is derived from the walk direction in `positionOf`, so it is never hand-set and always matches what is drawn. A shield reduces damage and never confers immunity.
+
+*Umbra has two phases.* It advances behind its shield and drops it at 45 percent of the road, announced with a `bossphase` event. 56 s on the road, inside the brief's 45 to 60 s window.
+
+*Both endings say which one happened.* A boss breach gets its own heading, its own one-line reason naming the core HP still standing, and its own advice. An ordinary loss is unchanged.
+
+*Coverage demoted.* Revision 1 had put a damage figure (PWR) in the HUD. Revision 2 says to keep coverage secondary and expose damage telemetry only in development, so the HUD stat is now COVER n / 31 and the pressure figure the solver computes stays in the debug panel. The planning strip names the next formation in words rather than counting down.
+
+*Shield made visible.* The shell that used to sit on every brute now renders only on shielded bodies, offset onto the face they walk towards, and flares pale blue when light is turned away by it. A landed hit keeps the white burn.
+
+**Balance changes, before to after, with the reason.**
+
+| Tunable | Before | After | Reason |
+| --- | --- | --- | --- |
+| `WAVES` | 5 beats | 8 encounters | Revision 2 sets eight as the initial complete arc. |
+| `UNLOCK_WAVE` | 2 / 3 / 4 | 3 / 4 / 5 | Each tool now arrives just before the encounter that wants it. |
+| `HP_MULT_PER_WAVE` | 0.34 | 0.2 | Eight encounters rather than five, same total escalation. |
+| `WAVE_CLEAR_BASE` / `PER_WAVE` | 30 / 22 | 24 / 12 | Eight clear bonuses instead of five; total income held roughly level. |
+| `MOVE_REFORM` | 0.75 | 0.3 | The brief asks for about 0.3 s, and editing during planning is free anyway. |
+| `EARLY_CALL_RATE`, `COUNTDOWN`, `FIRST_COUNTDOWN` | 1.0 / 10 / 10 | removed | Planning waits for the player. |
+| `bulwark.shield` | n/a | 0.75, then 0.60 | At 0.75 no strategy in the `bots` suite won. The mirror builds this map naturally produces light the sweeps head on, which is exactly the shielded angle, so Bulwarks leaked in every run. 0.60 keeps the lesson and leaves the encounter winnable. |
+| `bulwark` hp / leak | 120 / 3 | 95 / 2 | Same measurement: seven Bulwark leaks per run was killing every build. |
+| `umbra` | 520 hp, speed 0.40, shield 0.70 flat | 430 hp, speed 0.55, shield 0.70 then 0 | The flat shield made the boss survive its whole walk again. Phases fixed it properly, and the faster walk brings the encounter to 56 s. |
+
+**What did not work.**
+
+- Bulwark shield at 0.75. Zero of ten scripted strategies won. Recorded and reduced rather than left in.
+- The first attempt at a shield-facing test compared two different builds delivering different beam power, so it measured beam order rather than facing. Replaced with a test that lights two sweeps walked in opposite directions, giving identical power from the core: 2.5 damage into the face against 10 into the back, exactly the shield constant.
+- Hand-setting an enemy facing inside a test does not hold, because `positionOf` recomputes it from the path every step. That is the right behaviour; the test was wrong.
+
+**Test changes.** The whole suite assumed waves start themselves; every scripted run now asks for each encounter, through a new `__REFRACT.startWave()` and `playWave()`. `brute` renamed throughout. Two new scenarios: `shield` (12 checks: the exposure rule from all four sides at identical power, and that an unshielded body is exposed from every side) and `endings` (11 checks: both loss screens and the boss phase change). `bossgate` was rewritten to match revision 2 and no longer requires the static layout to lose. It runs the static three-mirror baseline and an adapted network side by side and requires the adapted one to end in better shape, with the gap already open before the last encounter.
+
+**Honest reading of the static baseline.** The static three-mirror layout with no core upgrades reaches encounter 6 and loses with 0 HP. The same three mirrors plus a splitter, two lamps and four core upgrades reaches encounter 8 and loses to an Umbra breach with 8 HP. A full informed build wins with 10 to 16 HP. Adapting is worth doing and the gap opens well before the boss, but the static layout is not artificially punished: it runs out of answers when shields arrive.
+
+**Evidence.** `test-beam.js` 26 tests pass. `build.js && check.js` pass on the release build. All 21 browser scenarios pass at 390x844: layout 8, beam 23, waves 29, runstates 54, toolset 57, escalation 34, builds 4, teaching 34, mobile 32, landscape 9, handplay 3, feel 26, audio 23, bots 15, perf 17, acceptance 33, lattice 5, bossgate 9, shield 12, endings 11, plus `release` 16 against a real release build served from `tools/static.js`. The release tap-only playthrough clears all eight encounters with 12 of 20 core HP in 182 s at 2x speed, driving START WAVE by tapping like a player. `bots`: nothing and core-only lose at encounter 3; a first-timer reaches Umbra and loses at 4 HP; informed wins at 10 HP; three of ten strategies win. Zero console messages from our code. Network limited to `index.html` and `vendor/three.min.js`.
+
+**Still not implemented from revision 2.** Listed so they are not mistaken for done:
+
+1. *Two previewed entry routes.* The map is still single-entry Switchback. This is the largest remaining item and needs a map redesign plus preview UI.
+2. *The two upgrade choices* after encounters 2 and 5 (Crossfire, Afterglow, Piercing Light, Return Current, Focused Core, Twin Flames). Not started.
+3. *The integrated playable tutorial* in encounter 1. The existing hint system covers part of it; the guided first placement does not exist.
+4. *Reflector as an amplifier.* Still a 60 percent return pass.
+5. *Core power dominance.* A single mirror plus a maxed core still clears the arc in the ceiling test, which is the failure mode the brief names. The curve was left alone because changing it invalidates every measurement above.
+6. *Unfamiliar-player testing.* None has happened. No claim is made about how the game reads to someone new.
+
+**Result:** A complete, winnable eight-encounter run with an untimed planning phase, a directional-shield enemy, a two-phase boss and two distinguishable endings. Every automated check that can run in this environment passes.
 

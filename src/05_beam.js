@@ -162,14 +162,27 @@
         for (var k = 0; k < ordered.length; k++) {
           var e = ordered[k];
           /*
-           * Pressure counts the power that reaches each enemy, so it is the
-           * same number whether this is a preview (dt 0) or a live step.
+           * How much of this beam lands depends on which side of the enemy it
+           * arrives at, so a shielded body takes far less from light meeting
+           * its face than from light reaching its flank or its back.
            */
-          out.pressure += power;
+          var exposure = R.enemies.exposure(e, dir);
+          var landed = power * exposure;
+          /*
+           * Pressure counts the damage actually landing, so it is the same
+           * number whether this is a preview (dt 0) or a live step.
+           */
+          out.pressure += landed;
           if (stepDt > 0) {
-            e.damage += power * stepDt;
+            e.damage += landed * stepDt;
             e.hitAt = nowTime;
+            if (exposure < 1) e.shieldedAt = nowTime;
+            else if (e.shield) e.exposedAt = nowTime;
           }
+          /*
+           * Absorption is a property of the body, not of the shield: what
+           * continues past this enemy is reduced the same way from any angle.
+           */
           power *= (1 - e.absorb);
           if (power < B.MIN_POWER) { power = 0; break; }
         }

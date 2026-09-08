@@ -10,6 +10,16 @@
 
   R.pieces = {};
 
+  /*
+   * Planning is the forgiving phase: pieces can be moved, turned and sold back
+   * at the price actually paid, so experimenting with a layout costs nothing.
+   * Once a wave is running, edits carry a re-form delay and sales take the
+   * sell rate.
+   */
+  R.pieces.isPlanning = function (s) {
+    return s.phase === 'building' || s.phase === 'title';
+  };
+
   R.pieces.cost = function (s, type) {
     if (type === 'lamp') return B.PIECE_COST.lamp + B.LAMP_COST_STEP * s.lampsPlaced;
     return B.PIECE_COST[type] || 0;
@@ -159,8 +169,13 @@
     R.beam.recompute(s);
   }
 
-  /* Full price back inside the undo window, otherwise the sell rate. */
+  /*
+   * The refund is the price this piece was actually paid for while planning or
+   * inside the undo window, and the sell rate once a wave is running. It is
+   * never more than was paid, so a rising lamp price cannot be arbitraged.
+   */
   R.pieces.refundFor = function (s, p) {
+    if (R.pieces.isPlanning(s)) return p.cost;
     var u = s.ui.undo;
     if (u && u.pieceId === p.id && s.time <= u.until) return p.cost;
     return Math.floor(p.cost * B.SELL_RATE);
@@ -193,8 +208,11 @@
     p.c = toC;
     p.r = toR;
     p.i = R.grid.idx(toC, toR);
-    /* A moved piece is transparent to light while it re-forms. */
-    p.inactiveUntil = s.time + B.MOVE_REFORM;
+    /*
+     * A piece moved mid-combat is transparent to light while it re-forms.
+     * Rearranging during planning is free.
+     */
+    p.inactiveUntil = R.pieces.isPlanning(s) ? -1 : s.time + B.MOVE_REFORM;
     s.pieces.set(p.i, p);
     s.ui.moveMode = false;
     R.beam.recompute(s);

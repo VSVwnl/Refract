@@ -17,9 +17,11 @@
 
   function acquire() {
     return pool.length ? pool.pop() : {
-      id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0,
-      gold: 0, leak: 0, radius: 0, boss: false,
-      damage: 0, hitAt: -1, x: 0, z: 0, cell: -1, spawnAt: 0
+      id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0, shield: 0,
+      gold: 0, leak: 0, radius: 0, boss: false, face: 0,
+      shield0: 0, exposeAt: 0, phase: 1,
+      damage: 0, hitAt: -1, shieldedAt: -1, exposedAt: -1,
+      x: 0, z: 0, cell: -1, spawnAt: 0
     };
   }
 
@@ -58,7 +60,7 @@
       groups.push(['swarmling', 8, 0.25]);
       groups.push(['mote', Math.ceil(count / 2), 0.6]);
     } else {
-      groups.push(['brute', Math.max(2, Math.floor(count / 4)), 1.2]);
+      groups.push(['bulwark', Math.max(2, Math.floor(count / 4)), 1.2]);
       groups.push(['mote', count, 0.6]);
     }
     if (wave % B.ENDLESS.KING_EVERY === 0) groups.unshift(['bruteking', 1, 0]);
@@ -100,6 +102,25 @@
     return out;
   };
 
+  /*
+   * One short line naming what is coming and why it matters. It describes the
+   * formation, never the player's layout, so the preview cannot be accused of
+   * reacting to what has been built.
+   */
+  en.threatNote = function (wave) {
+    var comp = en.composition(wave);
+    var has = {};
+    for (var i = 0; i < comp.length; i++) has[comp[i].type] = comp[i].count;
+    if (has.umbra) return 'Umbra, shielded, with escorts';
+    if (has.bruteking) return 'a Brute King leads';
+    if (has.bulwark && has.swarmling) return 'a shielded leader, then a swarm';
+    if (has.bulwark && comp[0].type === 'bulwark') return 'armoured leaders, others behind';
+    if (has.bulwark) return 'armoured bodies in the line';
+    if (has.swarmling) return 'a swarm that drains the beam';
+    if (has.runner) return 'runners cross the light fast';
+    return 'a slow opening group';
+  };
+
   /* ---------- spawning ---------- */
 
   en.spawn = function (s, type) {
@@ -112,12 +133,19 @@
     e.t = -1;
     e.speed = def.speed * en.speedMult(s.wave);
     e.absorb = def.absorb;
+    e.shield = def.shield || 0;
+    e.shield0 = e.shield;
+    e.exposeAt = def.exposeAt || 0;
+    e.phase = 1;
     e.gold = def.gold;
     e.leak = def.leak;
     e.radius = def.radius;
     e.boss = !!def.boss;
     e.damage = 0;
     e.hitAt = -1;
+    e.shieldedAt = -1;
+    e.exposedAt = -1;
+    e.face = R.S;
     e.cell = -1;
     e.spawnAt = s.time;
     positionOf(s, e);
@@ -157,7 +185,31 @@
     var idx = Math.round(e.t);
     if (idx < 0) e.cell = -1;
     else e.cell = s.path[Math.min(idx, s.path.length - 1)].i;
+    e.face = facing(pa, pb, e.face);
   }
+
+  /*
+   * Which way an enemy is looking, which is simply the way it is walking. The
+   * road is axis aligned, so this is one of the four direction codes. A step
+   * that covers no ground keeps the previous facing.
+   */
+  function facing(from, to, previous) {
+    var dx = to.x - from.x;
+    var dz = to.z - from.z;
+    if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? R.E : R.W;
+    if (Math.abs(dz) > 0) return dz > 0 ? R.S : R.N;
+    return previous;
+  }
+
+  /*
+   * How much of an incoming beam actually lands, given the direction the light
+   * is travelling. Light meeting the face this enemy walks towards is cut by
+   * its shield; light arriving at a flank or from behind lands in full.
+   */
+  en.exposure = function (e, beamDir) {
+    if (!e.shield) return 1;
+    return beamDir === R.grid.opposite(e.face) ? 1 - e.shield : 1;
+  };
 
   en.positionOf = positionOf;
 
@@ -189,10 +241,22 @@
 
   en.moveStep = function (s, dt) {
     var list = s.enemies;
+    var last = s.path.length - 1;
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
       e.t += e.speed * dt;
       positionOf(s, e);
+      /*
+       * A boss that advances behind a shield drops it partway down the road.
+       * The change is announced so the renderer and audio can telegraph it,
+       * and it happens on distance travelled rather than on damage taken, so
+       * the player can see it coming and prepare for it.
+       */
+      if (e.phase === 1 && e.exposeAt > 0 && e.t >= last * e.exposeAt) {
+        e.phase = 2;
+        e.shield = 0;
+        R.emit(s, 'bossphase', { enemy: e.type, id: e.id, phase: 2, x: e.x, z: e.z });
+      }
     }
   };
 

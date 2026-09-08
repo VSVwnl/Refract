@@ -36,41 +36,70 @@
     LAMP_COST_STEP: 20,
     SELL_RATE: 0.7,
     UNDO_WINDOW: 3.0,
-    MOVE_REFORM: 0.75,
-    COUNTDOWN: 10,
-    FIRST_COUNTDOWN: 10,
+    /*
+     * A piece is transparent to light while it re-forms after a move. Editing
+     * during planning is free; this delay only applies mid-combat, so it is
+     * short enough to stay a tactical cost rather than a punishment.
+     */
+    MOVE_REFORM: 0.3,
     GROUP_GAP: 1.5,
-    EARLY_CALL_RATE: 1.0,
-    WAVE_CLEAR_BASE: 30,
-    WAVE_CLEAR_PER_WAVE: 22,
-    HP_MULT_PER_WAVE: 0.34,
-    UNLOCK_WAVE: { splitter: 2, reflector: 3, lamp: 4 },
+    WAVE_CLEAR_BASE: 24,
+    WAVE_CLEAR_PER_WAVE: 12,
+    HP_MULT_PER_WAVE: 0.2,
+    UNLOCK_WAVE: { splitter: 3, reflector: 4, lamp: 5 },
     SPEED_OPTIONS: [1, 2],
+    /*
+     * Two separate constants govern how a body interacts with light, so they
+     * can be tuned and tested independently:
+     *
+     *   absorb  how much of the beam this body removes from what continues
+     *           behind it. This is what shields the enemies further along.
+     *   shield  how much incoming damage is deflected when light meets this
+     *           enemy head on, in the face it is walking towards. Light that
+     *           reaches its flank or its back is not reduced at all.
+     *
+     * A shield reduces damage; it is never total immunity. Attacking from
+     * another direction, adding a return pass, or simply lighting more of the
+     * road are all legitimate answers with different costs.
+     */
     ENEMY: {
-      mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, gold: 4,   leak: 1,  radius: 0.28 },
-      runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, gold: 5,   leak: 1,  radius: 0.22 },
-      swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, gold: 1,   leak: 1,  radius: 0.14 },
-      brute:     { hp: 120, speed: 0.55, absorb: 0.70, gold: 16,  leak: 3,  radius: 0.36 },
-      bruteking: { hp: 460, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
-      umbra:     { hp: 520, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
+      mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, shield: 0,    gold: 4,   leak: 1,  radius: 0.28 },
+      runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, shield: 0,    gold: 5,   leak: 1,  radius: 0.22 },
+      swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, shield: 0,    gold: 1,   leak: 1,  radius: 0.14 },
+      bulwark:   { hp: 95,  speed: 0.55, absorb: 0.55, shield: 0.60, gold: 18,  leak: 2,  radius: 0.36 },
+      bruteking: { hp: 460, speed: 0.45, absorb: 0.70, shield: 0.60, gold: 50,  leak: 6,  radius: 0.50, boss: true },
+      /*
+       * Umbra advances behind its shield, then drops it for the rest of the
+       * walk. `exposeAt` is the fraction of the road at which that happens, so
+       * the armoured phase rewards reaching its back or bringing a return
+       * pass, and the exposed phase rewards everything the player has built.
+       */
+      umbra:     { hp: 430, speed: 0.55, absorb: 0.70, shield: 0.70, exposeAt: 0.45, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
     /*
-     * Five encounter beats, each testing a different distribution of light.
-     * Each group is [type, count, gapSeconds]; groups run in order with
-     * GROUP_GAP between them.
+     * Eight encounters. Each one either introduces a decision, combines ideas
+     * already taught, or pays one off. Each group is [type, count, gapSeconds];
+     * groups run in order with GROUP_GAP between them.
      *
-     * 1 Opening      one slow group; connect a route change to damage.
-     * 2 Shield       a brute walks in front and shields the motes behind it.
-     * 3 Distribution a swarm and an armoured target want different answers.
-     * 4 Pressure     two lanes' worth of traffic at once; one angle is short.
-     * 5 Umbra        the boss, escorted. It must die and must never arrive.
+     * 1 first light   one slow group; place a mirror and watch it burn.
+     * 2 absorption    a small clump that shields itself; then the first upgrade.
+     * 3 distribution  two clusters close together; one line cannot cover both.
+     * 4 the shield    Bulwarks walk in facing the light; reflectors unlock.
+     * 5 fast and deep a swarm behind a Bulwark; lamps unlock, then the second
+     *                 upgrade choice.
+     * 6 payoff        the specialisation chosen above gets to work.
+     * 7 everything    all four threats, and the last spending decision.
+     * 8 Umbra         armoured advance, then an exposed phase with escorts.
      */
     WAVES: [
       [ ['mote', 5, 1.2] ],
-      [ ['brute', 1, 0], ['mote', 7, 0.9] ],
-      [ ['swarmling', 10, 0.28], ['brute', 1, 0], ['runner', 5, 0.6] ],
-      [ ['brute', 2, 1.4], ['mote', 8, 0.7], ['swarmling', 10, 0.25], ['runner', 6, 0.5] ],
-      [ ['mote', 5, 0.7], ['brute', 2, 1.2], ['umbra', 1, 0], ['runner', 6, 0.5] ]
+      [ ['mote', 4, 0.5], ['mote', 5, 0.9] ],
+      [ ['runner', 4, 0.5], ['mote', 6, 0.7] ],
+      [ ['bulwark', 2, 2.0], ['mote', 5, 0.8] ],
+      [ ['bulwark', 1, 0], ['swarmling', 12, 0.25], ['runner', 5, 0.5] ],
+      [ ['bulwark', 2, 1.6], ['runner', 6, 0.45], ['mote', 5, 0.7] ],
+      [ ['swarmling', 12, 0.22], ['bulwark', 2, 1.4], ['runner', 6, 0.45], ['mote', 6, 0.6] ],
+      [ ['umbra', 1, 0], ['runner', 5, 0.6], ['bulwark', 1, 0], ['mote', 5, 0.7] ]
     ],
     ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
   };
@@ -128,7 +157,7 @@
       mote: 0x2a1740,
       runner: 0x123536,
       swarmling: 0x140f1c,
-      brute: 0x1a1526,
+      bulwark: 0x1a1526,
       bruteking: 0x241a10,
       umbra: 0x140b22
     },
@@ -136,7 +165,7 @@
       mote: 0xd63bff,
       runner: 0x35e0d0,
       swarmling: 0xff56b0,
-      brute: 0x8a7bd6,
+      bulwark: 0x8a7bd6,
       bruteking: 0xffc247,
       umbra: 0xb14dff
     }

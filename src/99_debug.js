@@ -59,6 +59,22 @@
         return R.state.phase;
       },
 
+      /*
+       * Planning waits for the player, so a scripted run has to ask for each
+       * encounter the same way a tap does.
+       */
+      startWave: function () {
+        R.startWave(R.state);
+        return R.state.phase;
+      },
+
+      /* Start the next encounter and run it to its end. */
+      playWave: function (maxSeconds) {
+        var s = R.state;
+        R.startWave(s);
+        return api().stepUntil('s.phase !== "wave"', maxSeconds || 260);
+      },
+
       /* Speed 0 stops the frame loop from stepping, so step() owns the clock. */
       freeze: function (on) {
         R.state.speed = on === false ? 1 : 0;
@@ -157,7 +173,7 @@
           wave: s.wave,
           wavesCleared: s.wavesCleared,
           endless: s.endless,
-          countdown: Math.round(s.countdown * 100) / 100,
+          bossBreached: s.bossBreached,
           time: Math.round(s.time * 100) / 100,
           gold: s.gold,
           goldEarned: s.goldEarned,

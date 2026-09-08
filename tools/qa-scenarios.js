@@ -58,10 +58,11 @@ module.exports = function (S) {
     };
 
     ctx.eq(await lit(), 1, 'default beam lights one road cell');
-    /* PWR is the light landing on enemies; with an empty board it is zero. */
+    /* Coverage is a secondary reading: one lit road cell on an empty board. */
     ctx.eq((await hud()).replace(/\s+/g, ''),
-      'PWR0COV1/◆' + await ctx.ev(function () { return R.BALANCE.START_GOLD; }),
-      'HUD shows no pressure, one lit cell and the starting gold');
+      'COVER1/' + await ctx.ev(function () { return R.state.roadCells; }) +
+      '/◆' + await ctx.ev(function () { return R.BALANCE.START_GOLD; }),
+      'HUD shows one lit road cell and the starting gold');
     await ctx.snap('a-default');
 
     await ctx.tapCell(7, 4);
@@ -163,12 +164,17 @@ module.exports = function (S) {
     ctx.eq(m.wave, 0, 'starts before wave 1');
     ctx.eq(m.coreHp, B.coreHp, 'core hp');
     ctx.eq(m.gold, B.startGold, 'start gold');
-    ctx.near(m.countdown, B.first, 0.01, 'first countdown');
+
+    /* Planning has no clock: waiting must never start a wave by itself. */
+    await step(30);
+    m = await snap();
+    ctx.eq(m.phase, 'building', 'waiting in planning does not start the wave');
+    ctx.eq(m.wave, 0, 'and no wave number was consumed');
 
     /* --- wave 1 with nothing placed: every mote leaks --- */
-    await step(B.first + 0.5);
+    await ctx.ev(function () { window.__REFRACT.startWave(); });
     m = await snap();
-    ctx.eq(m.phase, 'wave', 'wave 1 started after the countdown');
+    ctx.eq(m.phase, 'wave', 'asking for the wave starts it');
     ctx.eq(m.wave, 1, 'wave number');
     await ctx.snap('a-wave1-running');
 
@@ -178,9 +184,8 @@ module.exports = function (S) {
     ctx.eq(m.leaksBy.mote, B.wave1Motes, 'leaks attributed to motes');
     ctx.eq(m.gold, B.startGold + B.clear1, 'gold is start plus the wave-1 clear bonus');
     ctx.eq(m.wave, 1, 'wave 1 is over');
-    ctx.eq(m.phase, 'building', 'back to building');
-    ctx.near(m.countdown, B.between, 0.02, 'countdown between waves');
-    ctx.eq(m.unlocked.splitter, B.unlock.splitter <= 2, 'splitter unlocked for wave 2');
+    ctx.eq(m.phase, 'building', 'back to planning');
+    ctx.eq(m.unlocked.splitter, B.unlock.splitter <= 2, 'splitter unlocked on schedule');
 
     /* --- wave 1 with one mirror at (7,6): nothing gets through --- */
     await ctx.ev(function () { window.__REFRACT.restart(101); window.__REFRACT.freeze(true); });
@@ -189,7 +194,7 @@ module.exports = function (S) {
     ctx.eq(m.lit, 7, 'mirror lights the row 6 sweep');
     ctx.eq(m.gold, B.startGold - B.mirror, 'the mirror was paid for');
 
-    await step(B.first + 0.5);
+    await ctx.ev(function () { window.__REFRACT.startWave(); });
     await until('s.phase === "building"', 120);
     m = await snap();
     const kills = B.wave1Motes * B.moteGold;
@@ -198,19 +203,19 @@ module.exports = function (S) {
     ctx.eq(m.goldEarned, kills + B.clear1, 'earned gold counts kills and the bonus');
     await ctx.snap('b-wave1-cleared');
 
-    /* --- waves 2 and 3 --- */
-    await until('s.wave === 2 && s.phase === "wave"', 30);
+    /* --- waves 2 and 3, each asked for --- */
+    await ctx.ev(function () { window.__REFRACT.startWave(); });
     m = await snap();
     ctx.eq(m.wave, 2, 'wave 2 running');
     await ctx.snap('c-wave2');
-    await until('s.wave === 2 && s.phase === "building"', 200);
+    await until('s.phase === "building"', 200);
     m = await snap();
     ctx.eq(m.wavesCleared, 2, 'two waves cleared');
 
-    await until('s.wave === 3 && s.phase === "building"', 240);
+    await ctx.ev(function () { window.__REFRACT.playWave(); });
     m = await snap();
     ctx.eq(m.wavesCleared, 3, 'three waves cleared');
-    ctx.eq(m.unlocked.reflector, true, 'reflector unlocked by wave 4');
+    ctx.eq(m.unlocked.reflector, B.unlock.reflector <= 4, 'reflector unlocked on schedule');
     ctx.log('  after three waves: hp ' + m.coreHp + ' gold ' + m.gold + ' score ' + m.score);
     await ctx.snap('d-after-wave3');
 
@@ -246,7 +251,6 @@ module.exports = function (S) {
       window.__REFRACT.freeze(true);
       const s = R.state;
       s.wave = 3;
-      s.countdown = 9999;
       R.enemies.spawn(s, 'runner');
       window.__REFRACT.stepUntil('s.enemies.length === 0', 60);
       return { leaks: s.leaksBy.runner, earned: s.goldEarned };
@@ -260,7 +264,6 @@ module.exports = function (S) {
       window.__REFRACT.place('mirror', 7, 4, 1);
       const s = R.state;
       s.wave = 3;
-      s.countdown = 9999;
       R.enemies.spawn(s, 'runner');
       window.__REFRACT.stepUntil('s.enemies.length === 0', 60);
       return { leaks: s.leaksBy.runner, killed: s.goldEarned };
@@ -308,13 +311,17 @@ module.exports = function (S) {
 
     await ctx.tap('#overlayRoot .bigbtn');
     let m = await snap();
-    ctx.eq(m.phase, 'building', 'PLAY starts the run');
-    ctx.near(m.countdown, 10, 0.4, 'first countdown');
+    ctx.eq(m.phase, 'building', 'PLAY opens the planning phase');
     ctx.eq(await overlay(), null, 'the overlay is gone');
 
-    /* --- lose for real, by placing nothing --- */
-    await ctx.ev(function () { window.__REFRACT.freeze(true); });
-    await until('s.phase === "lost"', 900);
+    /* --- lose for real, by placing nothing and asking for wave after wave --- */
+    await ctx.ev(function () {
+      window.__REFRACT.freeze(true);
+      for (let i = 0; i < R.BALANCE.WAVES.length; i++) {
+        window.__REFRACT.playWave(300);
+        if (R.state.phase === 'lost' || R.state.phase === 'won') break;
+      }
+    });
     m = await snap();
     ctx.eq(m.phase, 'lost', 'the core falls when nothing is placed');
     ctx.eq(m.coreHp, 0, 'core hp is zero');
@@ -340,7 +347,7 @@ module.exports = function (S) {
     ctx.eq(m.lit, 1, 'beam reset to one lit cell');
     ctx.eq(m.pieces.length, 0, 'no pieces');
     ctx.eq(m.enemies, 0, 'no enemies');
-    ctx.eq(m.leaksBy.mote + m.leaksBy.runner + m.leaksBy.brute, 0, 'leak tally reset');
+    ctx.eq(m.leaksBy.mote + m.leaksBy.runner + m.leaksBy.bulwark, 0, 'leak tally reset');
     ctx.eq(m.unlocked.splitter, false, 'unlocks reset');
 
     /* --- victory --- */
@@ -377,7 +384,6 @@ module.exports = function (S) {
       await ctx.page.waitForTimeout(60);
       const sn = await snap();
       delete sn.time;
-      delete sn.countdown;
       delete sn.render;
       shots.push(JSON.stringify(sn));
     }
@@ -441,12 +447,17 @@ module.exports = function (S) {
       return out;
     });
     ctx.log('  waves: ' + JSON.stringify(waves));
-    ctx.eq(waves.length, 5, 'the session is five encounter beats');
-    ctx.check(waves[0].n <= 6, 'the opening beat is small (' + waves[0].n + ' enemies)');
-    ctx.eq(waves[1].counts.brute, 1, 'the shield beat leads with a brute');
-    ctx.check(waves[1].counts.mote > 0, 'the shield beat has fragile followers behind it');
-    ctx.eq(waves[waves.length - 1].counts.umbra, 1, 'the last beat is Umbra');
-    ctx.check(waves[3].n > waves[0].n * 3, 'the pressure beat is much larger than the opening');
+    ctx.eq(waves.length, 8, 'the session is eight encounters');
+    ctx.check(waves[0].n <= 6, 'the opening encounter is small (' + waves[0].n + ' enemies)');
+    ctx.eq(waves[0].counts.mote, waves[0].n, 'and it is motes only, so one lesson at a time');
+    ctx.check(!waves[0].counts.bulwark && !waves[1].counts.bulwark && !waves[2].counts.bulwark,
+      'shields are not shown before the encounter that teaches them');
+    ctx.eq(waves[3].counts.bulwark, 2, 'encounter 4 introduces the Bulwark');
+    ctx.check(waves[4].counts.swarmling > 0, 'encounter 5 puts a swarm behind a shield');
+    ctx.eq(waves[waves.length - 1].counts.umbra, 1, 'the last encounter is Umbra');
+    ctx.check(waves[6].n > waves[0].n * 3,
+      'the encounter before the boss is much larger than the opening (' +
+      waves[0].n + ' to ' + waves[6].n + ')');
     /* Each beat has to bring something the one before it did not. */
     for (let i = 1; i < waves.length; i++) {
       const before = Object.keys(waves[i - 1].counts).join();
@@ -615,11 +626,14 @@ module.exports = function (S) {
     await ctx.tapCell(0, 8);
     ctx.eq(await pieceAt(0, 6), null, 'the lamp left its old tile');
     ctx.eq((await pieceAt(0, 8)).type, 'lamp', 'the lamp arrived on the new tile');
+    /*
+     * Rearranging during planning is free. The same move during a wave costs
+     * a short re-form, which is the tactical price of editing under fire.
+     */
     const reform = await st(function () {
-      const p = R.pieces.at(R.state, 0, 8);
-      return Math.round((p.inactiveUntil - R.state.time) * 100) / 100;
+      return R.pieces.at(R.state, 0, 8).inactiveUntil;
     });
-    ctx.near(reform, 0.75, 0.02, 'a moved piece re-forms for 0.75 s');
+    ctx.eq(reform, -1, 'a piece moved during planning is never inactive');
     ctx.eq(await st(function () { return Math.round(R.state.beam.lit[R.grid.idx(2, 8)] * 100) / 100; }), 0,
       'the light is off while it re-forms');
     await st(function () { window.__REFRACT.step(0.8); });
@@ -630,13 +644,15 @@ module.exports = function (S) {
       return R.grid.inBounds(c, r) && R.state.beam.lit[R.grid.idx(c, r)] > 0;
     }), 'the lamp lights again once re-formed');
 
-    /* --- sell at 70 percent --- */
+    /* --- selling gives the paid price back while planning --- */
     await st(function () { window.__REFRACT.step(4); });
     const goldBeforeSell = await gold();
+    const splitterCost = await st(function () { return R.BALANCE.PIECE_COST.splitter; });
     await ctx.tapCell(7, 6);
     await ctx.tap('#actionBar button:nth-child(3)');
     ctx.eq(await pieceAt(7, 6), null, 'the splitter is gone');
-    ctx.eq(await gold(), goldBeforeSell + 31, 'sell refunds 70 percent of 45, rounded down');
+    ctx.eq(await gold(), goldBeforeSell + splitterCost,
+      'selling during planning returns the price paid');
 
     /* --- undo returns the full price --- */
     const goldBeforeBuy = await gold();
@@ -658,10 +674,32 @@ module.exports = function (S) {
     await ctx.page.waitForTimeout(80);
     ctx.eq(await st(function () { return document.getElementById('undoChip').style.display; }), 'none',
       'the chip disappears after three seconds');
-    const g2 = await gold();
-    await ctx.tapCell(3, 3);
-    await ctx.tap('#actionBar button:nth-child(3)');
-    ctx.eq(await gold(), g2 + 14, 'selling after the window refunds 70 percent of 20');
+    /*
+     * Once a wave is running, editing costs something: a moved piece goes dark
+     * while it re-forms and a sale returns only the sell rate.
+     */
+    const inCombat = await st(function () {
+      window.__REFRACT.restart(9020);
+      const s = R.state;
+      s.gold = 1000;
+      R.pieces.place(s, 'mirror', 3, 3, 1);
+      window.__REFRACT.startWave();
+      window.__REFRACT.step(R.BALANCE.UNDO_WINDOW + 0.5);
+      R.pieces.move(s, 3, 3, 3, 5);
+      const dark = Math.round((R.pieces.at(s, 3, 5).inactiveUntil - s.time) * 100) / 100;
+      const before = s.gold;
+      R.pieces.sell(s, 3, 5);
+      return {
+        dark: dark, expected: R.BALANCE.MOVE_REFORM,
+        refund: s.gold - before,
+        rate: Math.floor(R.BALANCE.PIECE_COST.mirror * R.BALANCE.SELL_RATE)
+      };
+    });
+    ctx.log('  editing under fire: ' + JSON.stringify(inCombat));
+    ctx.near(inCombat.dark, inCombat.expected, 0.02,
+      'a piece moved during a wave goes dark for ' + inCombat.expected + ' s');
+    ctx.eq(inCombat.refund, inCombat.rate,
+      'selling mid-wave after the undo window refunds the sell rate');
 
     /* --- drag a palette button onto a tile --- */
     const before = await st(function () { return R.state.pieces.size; });
@@ -777,7 +815,7 @@ module.exports = function (S) {
       out.king = R.enemies.spawn(s, 'bruteking').maxHp;
       s.wave = R.BALANCE.WAVES.length;
       out.umbra = R.enemies.spawn(s, 'umbra').maxHp;
-      out.brute12 = R.enemies.spawn(s, 'brute').maxHp;
+      out.bulwark12 = R.enemies.spawn(s, 'bulwark').maxHp;
       return out;
     });
     ctx.log('  hp scaling: ' + JSON.stringify(hp));
@@ -791,7 +829,7 @@ module.exports = function (S) {
         mote12: Math.round(base.mote.hp * R.enemies.hpMult(12)),
         king: base.bruteking.hp,
         umbra: base.umbra.hp,
-        bruteLast: Math.round(base.brute.hp * R.enemies.hpMult(last))
+        bulwarkLast: Math.round(base.bulwark.hp * R.enemies.hpMult(last))
       };
     });
     ctx.eq(hp.mote1, expectHp.mote1, 'mote hp at wave 1 is unscaled');
@@ -800,18 +838,20 @@ module.exports = function (S) {
     ctx.eq(hp.mote12, expectHp.mote12, 'mote hp at wave 12 follows the multiplier');
     ctx.eq(hp.king, expectHp.king, 'the Brute King ignores the wave multiplier');
     ctx.eq(hp.umbra, expectHp.umbra, 'Umbra ignores the wave multiplier');
-    ctx.eq(hp.brute12, expectHp.bruteLast, 'a last-beat brute is scaled');
-    /* Five beats have to escalate as hard as twelve gentle ones used to. */
-    ctx.check(expectHp.mote5 >= expectHp.mote1 * 2,
-      'the last beat is at least twice as tough as the first (' + expectHp.mote1 + ' to ' + expectHp.mote5 + ')');
+    ctx.eq(hp.bulwark12, expectHp.bulwarkLast, 'a last-beat bulwark is scaled');
+    /* The arc has to escalate as hard as twelve gentle waves used to. */
+    const lastMote = await st(function () {
+      return Math.round(R.BALANCE.ENEMY.mote.hp * R.enemies.hpMult(R.BALANCE.WAVES.length));
+    });
+    ctx.check(lastMote >= expectHp.mote1 * 2,
+      'the last beat is at least twice as tough as the first (' + expectHp.mote1 + ' to ' + lastMote + ')');
 
     /* --- every type renders with its own shape --- */
     await st(function () {
       window.__REFRACT.restart(1201);
       window.__REFRACT.freeze(true);
       const s = R.state;
-      s.countdown = 9999;
-      const types = ['mote', 'runner', 'swarmling', 'brute', 'bruteking', 'umbra'];
+      const types = ['mote', 'runner', 'swarmling', 'bulwark', 'bruteking', 'umbra'];
       types.forEach(function (t, i) {
         const e = R.enemies.spawn(s, t);
         e.t = 3 + i * 0.9;
@@ -834,25 +874,29 @@ module.exports = function (S) {
         window.__REFRACT.restart(1300);
         window.__REFRACT.freeze(true);
         const s = R.state;
-        s.countdown = 9999;
         s.gold = 5000;
         s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
         b.forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
-        /* One brute in front, three motes behind it, all on row 3. */
-        const brute = R.enemies.spawn(s, 'brute');
-        brute.t = 13;
-        R.enemies.positionOf(s, brute);
-        const motes = [12, 11, 10].map(function (t) {
+        /*
+         * One bulwark leading three motes along the row 4 sweep. Index 12 is
+         * mid-sweep, so the bulwark is squarely facing the way it walks rather
+         * than sitting on a corner where every hit reads as a flank.
+         */
+        const bulwark = R.enemies.spawn(s, 'bulwark');
+        bulwark.t = 12;
+        R.enemies.positionOf(s, bulwark);
+        const motes = [11, 10, 9].map(function (t) {
           const e = R.enemies.spawn(s, 'mote');
           e.t = t;
           e.speed = 0;
           R.enemies.positionOf(s, e);
           return e;
         });
-        brute.speed = 0;
+        bulwark.speed = 0;
         window.__REFRACT.step(1);
         return {
-          brute: Math.round((brute.maxHp - brute.hp) * 10) / 10,
+          face: R.DIR_NAMES[bulwark.face],
+          bulwark: Math.round((bulwark.maxHp - bulwark.hp) * 10) / 10,
           motes: Math.round(motes.reduce(function (a, e) { return a + (e.maxHp - e.hp); }, 0) * 10) / 10
         };
       }, build);
@@ -861,17 +905,26 @@ module.exports = function (S) {
     const against = await dirTest([['mirror', 7, 4, 1]]);
     const withFlow = await dirTest([['mirror', 7, 8, 1], ['mirror', 0, 8, 1], ['mirror', 0, 4, 0]]);
     ctx.log('  against the flow: ' + JSON.stringify(against) + '   with the flow: ' + JSON.stringify(withFlow));
-    ctx.check(against.brute > withFlow.brute * 2, 'against the flow the brute takes the beam');
-    ctx.check(withFlow.motes > against.motes * 2, 'with the flow the motes behind it burn instead');
-    ctx.near(against.brute, 10, 0.3, 'the front brute takes full power');
-    ctx.near(against.motes, 7.1, 0.5, 'the shielded motes take very little');
+    /*
+     * The bulwark walks east along this sweep, so a beam running west meets
+     * its shield and a beam running east arrives at its back. The shield cuts
+     * the damage it takes; it never changes how much light continues past it.
+     */
+    ctx.eq(against.face, 'E', 'the bulwark faces the way it walks');
+    const shield = await st(function () { return R.BALANCE.ENEMY.bulwark.shield; });
+    const core1 = await st(function () { return R.beam.corePower(1); });
+    ctx.near(against.bulwark, core1 * (1 - shield), 0.3,
+      'a beam meeting the shield head on is cut to ' + Math.round((1 - shield) * 100) + ' percent');
+    ctx.check(withFlow.motes > against.motes * 2,
+      'lighting the sweep from the other end burns the followers instead');
+    ctx.check(withFlow.bulwark > against.bulwark,
+      'and the bulwark itself is never immune, only harder to hurt from the front');
 
     /* --- swarms drain the beam --- */
     const drain = await st(function () {
       window.__REFRACT.restart(1400);
       window.__REFRACT.freeze(true);
       const s = R.state;
-      s.countdown = 9999;
       s.gold = 5000;
       window.__REFRACT.place('mirror', 7, 4, 1);
       const clean = s.beam.lit[R.grid.idx(1, 4)];
@@ -942,7 +995,7 @@ module.exports = function (S) {
       const lit = s.beam.litRoadCount;
       const log = [];
       for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
-        window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+        window.__REFRACT.startWave();
         window.__REFRACT.stepUntil('s.phase !== "wave"', 220);
         log.push({ w: w, hp: s.coreHp, gold: s.gold, t: Math.round(s.time) });
         if (s.phase === 'lost' || s.phase === 'won') break;
@@ -977,7 +1030,7 @@ module.exports = function (S) {
       const log = [];
       for (let i = 0; i < 3; i++) {
         const w = s.wave + 1;
-        window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+        window.__REFRACT.startWave();
         window.__REFRACT.stepUntil('s.phase !== "wave"', 260);
         log.push({ w: s.wave, hp: s.coreHp, foes: s.waveEnemiesTotal });
         if (s.phase === 'lost') break;
@@ -985,8 +1038,11 @@ module.exports = function (S) {
       return { log: log, wave: s.wave, phase: s.phase, score: R.computeScore(s) };
     });
     ctx.log('  endless run: ' + JSON.stringify(endlessRun));
-    ctx.check(endlessRun.wave >= (await st(function () { return R.BALANCE.WAVES.length; })) + 3,
-      'three more endless waves ran (reached wave ' + endlessRun.wave + ')');
+    const lastBeat = await st(function () { return R.BALANCE.WAVES.length; });
+    ctx.check(endlessRun.wave > lastBeat,
+      'endless carries on past the last scripted encounter (reached wave ' + endlessRun.wave + ')');
+    ctx.check(endlessRun.log.length >= 2,
+      'and it ran at least two generated waves before the core fell');
     ctx.check(endlessRun.score > run.score, 'score keeps rising in endless');
     await ctx.snap('c-endless');
 
@@ -1116,7 +1172,7 @@ module.exports = function (S) {
         const lit = s.beam.litRoadCount;
         const hpLog = [];
         for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
-          window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+          window.__REFRACT.startWave();
           window.__REFRACT.stepUntil('s.phase !== "wave"', 260);
           hpLog.push(s.coreHp);
           if (s.phase === 'lost' || s.phase === 'won') break;
@@ -1196,26 +1252,30 @@ module.exports = function (S) {
     await ctx.page.waitForTimeout(60);
     ctx.check((await hintText() || '').indexOf('Tap a tile') < 0, 'a hint already shown does not come back');
 
-    /* --- early call pays the countdown bonus --- */
-    const early = await st(function () {
+    /*
+     * Planning is untimed and unpaid: reading the board slowly costs nothing
+     * and starting quickly earns nothing, so the only reason to start a wave
+     * is that the network is ready.
+     */
+    const planning = await st(function () {
       window.__REFRACT.restart(2100);
       window.__REFRACT.freeze(true);
       const s = R.state;
       window.__REFRACT.step(3);
       R.ui.frame(s, 0.016);
-      const before = { gold: s.gold, countdown: s.countdown, label: document.getElementById('btnNext').textContent };
-      const bonus = R.earlyCallBonus(s);
-      R.callWaveEarly(s);
-      return { before: before, bonus: bonus, after: s.gold, phase: s.phase, wave: s.wave };
+      const before = { gold: s.gold, label: document.getElementById('btnNext').textContent };
+      window.__REFRACT.step(20);
+      const waited = { gold: s.gold, phase: s.phase, wave: s.wave };
+      R.startWave(s);
+      return { before: before, waited: waited, after: s.gold, phase: s.phase, wave: s.wave };
     });
-    ctx.log('  early call: ' + JSON.stringify(early));
-    const rate = await st(function () { return R.BALANCE.EARLY_CALL_RATE; });
-    ctx.eq(early.bonus, Math.ceil(early.before.countdown * rate),
-      'bonus is ceil(remaining x the early-call rate of ' + rate + ')');
-    ctx.eq(early.after, early.before.gold + early.bonus, 'the bonus is paid');
-    ctx.eq(early.phase, 'wave', 'the wave starts immediately');
-    ctx.check(early.before.label.indexOf(String(early.bonus)) >= 0,
-      'the button shows the bonus on offer (' + early.before.label.replace(/\s+/g, ' ') + ')');
+    ctx.log('  planning: ' + JSON.stringify(planning));
+    ctx.eq(planning.waited.phase, 'building', 'twenty seconds of planning does not start the wave');
+    ctx.eq(planning.waited.gold, planning.before.gold, 'and planning pays nothing either way');
+    ctx.eq(planning.after, planning.before.gold, 'starting the wave pays no bonus');
+    ctx.eq(planning.phase, 'wave', 'the wave starts when asked');
+    ctx.check(planning.before.label.toUpperCase().indexOf('START') >= 0,
+      'the button says what it does (' + planning.before.label.replace(/\s+/g, ' ') + ')');
 
     /* --- help pauses and resumes --- */
     await st(function () { window.__REFRACT.restart(2101); window.__REFRACT.nextWave(); });
@@ -1250,15 +1310,15 @@ module.exports = function (S) {
         });
       });
     };
-    const bruteTip = await tipFor({ brute: 4, mote: 3 });
-    ctx.check(bruteTip.indexOf('Brutes') === 0, 'brute-heavy loss gets the brute tip');
+    const bulwarkTip = await tipFor({ bulwark: 4, mote: 3 });
+    ctx.check(bulwarkTip.indexOf('A Bulwark') === 0, 'a Bulwark-heavy loss gets the shield tip');
     const swarmTip = await tipFor({ swarmling: 12, mote: 2 });
     ctx.check(swarmTip.indexOf('Swarms') === 0, 'swarm-heavy loss gets the swarm tip');
     const runnerTip = await tipFor({ runner: 9, mote: 2 });
     ctx.check(runnerTip.indexOf('Runners') === 0, 'runner-heavy loss gets the runner tip');
     const moteTip = await tipFor({ mote: 6 });
     ctx.check(moteTip.indexOf('Light along the road') === 0, 'a plain loss gets the coverage tip');
-    ctx.log('  brute tip: ' + bruteTip);
+    ctx.log('  bulwark tip: ' + bulwarkTip);
 
     /* --- the beam sweeps out instead of appearing --- */
     const sweep = await st(function () {
@@ -1318,7 +1378,6 @@ module.exports = function (S) {
       const s = R.state;
       s.wave = R.BALANCE.WAVES.length - 1;
       s.phase = 'building';
-      s.countdown = 8;
       R.ui.frame(s, 0.016);
       return document.getElementById('strip').textContent.replace(/\s+/g, ' ').trim();
     });
@@ -1626,7 +1685,7 @@ module.exports = function (S) {
     const log = [];
     for (let w = 1; w <= 12; w++) {
       await shop();
-      await st(function (n) { window.__REFRACT.stepUntil('s.wave === ' + n + ' && s.phase === "wave"', 40); }, w);
+      await st(function () { window.__REFRACT.startWave(); });
       await st(function () { window.__REFRACT.stepUntil('s.phase !== "wave"', 260); });
       const m = await snap();
       log.push({ w: m.wave, hp: m.coreHp, gold: m.gold, lit: m.lit, core: m.coreLevel });
@@ -1680,7 +1739,6 @@ module.exports = function (S) {
     await st(function () {
       R.render.clearParticles();
       const s = R.state;
-      s.countdown = 9999;
       const e = R.enemies.spawn(s, 'mote');
       e.t = 5;
       R.enemies.positionOf(s, e);
@@ -1693,11 +1751,11 @@ module.exports = function (S) {
     await frames(2);
     await ctx.snap('a-death-burst');
 
-    /* --- brute death shakes, boss death shakes harder and stops time --- */
-    const bruteShake = await st(function () {
+    /* --- bulwark death shakes, boss death shakes harder and stops time --- */
+    const bulwarkShake = await st(function () {
       R.render.clearParticles();
       const s = R.state;
-      const e = R.enemies.spawn(s, 'brute');
+      const e = R.enemies.spawn(s, 'bulwark');
       e.t = 6;
       R.enemies.positionOf(s, e);
       e.hp = 0;
@@ -1705,7 +1763,7 @@ module.exports = function (S) {
       R.render.handleEvents(s);
       return { amp: R.render.feel.shakeAmp, parts: R.render.particleCount() };
     });
-    ctx.check(bruteShake.amp >= 4, 'a brute death shakes the board (' + bruteShake.amp + 'px)');
+    ctx.check(bulwarkShake.amp >= 4, 'a bulwark death shakes the board (' + bulwarkShake.amp + 'px)');
 
     const bossShake = await st(function () {
       R.render.clearParticles();
@@ -1720,7 +1778,7 @@ module.exports = function (S) {
       return { amp: R.render.feel.shakeAmp, hitStop: R.render.hitStop, parts: R.render.particleCount() };
     });
     ctx.log('  boss death: ' + JSON.stringify(bossShake));
-    ctx.check(bossShake.amp > bruteShake.amp, 'a boss death shakes harder');
+    ctx.check(bossShake.amp > bulwarkShake.amp, 'a boss death shakes harder');
     ctx.check(bossShake.hitStop > 0, 'a boss death stops time for a beat');
     ctx.check(bossShake.parts >= 20, 'a boss death throws a bigger burst');
 
@@ -1748,7 +1806,7 @@ module.exports = function (S) {
     /* --- leak flashes the vignette --- */
     const leak = await st(function () {
       const s = R.state;
-      const e = R.enemies.spawn(s, 'brute');
+      const e = R.enemies.spawn(s, 'bulwark');
       e.t = 31.2;
       R.enemies.positionOf(s, e);
       R.enemies.resolveStep(s);
@@ -2117,8 +2175,8 @@ module.exports = function (S) {
         ]
       },
 
-      'informed, early calls': {
-        early: true,
+      'informed, rearranged in planning': {
+        rearrange: true,
         plan: [
           { k: 'mirror', c: 7, r: 4 }, { k: 'mirror', c: 0, r: 4 }, { k: 'mirror', c: 0, r: 6 },
           { k: 'core' }, { k: 'core' },
@@ -2167,6 +2225,17 @@ module.exports = function (S) {
         const log = [];
         for (let w = 1; w <= 12; w++) {
           shop(s, spec, state);
+          if (spec.rearrange) {
+            /* Shuffle a piece around during planning; it must all be free. */
+            const first = s.pieces.values().next().value;
+            if (first) {
+              const c = first.c, r = first.r;
+              R.pieces.move(s, c, r, 3, 10);
+              R.pieces.move(s, 3, 10, c, r);
+              R.pieces.flip(s, c, r);
+              R.pieces.flip(s, c, r);
+            }
+          }
           if (spec.churn) {
             /* Buy and immediately sell back, hunting for a money loop. */
             for (let n = 0; n < 3; n++) {
@@ -2175,8 +2244,7 @@ module.exports = function (S) {
               }
             }
           }
-          if (spec.early && s.phase === 'building') R.callWaveEarly(s);
-          window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+          window.__REFRACT.startWave();
           window.__REFRACT.stepUntil('s.phase !== "wave"', 300);
           log.push(s.coreHp);
           if (s.phase === 'lost' || s.phase === 'won') break;
@@ -2239,34 +2307,54 @@ module.exports = function (S) {
     ctx.check(by['core only'].phase !== 'won', 'buying only core power does not win');
     ctx.check(by['one mirror then lamps'].phase !== 'won', 'one mirror plus lamps does not win');
 
-    /* --- no exploits --- */
+    /*
+     * Refund rules. Experimenting during planning has to be exactly free, a
+     * sale mid-combat has to cost something, and neither may ever hand back
+     * more than was paid, including for the lamp whose price rises per lamp.
+     */
     const churn = await st(function () {
       window.__REFRACT.restart(555);
       const s = R.state;
-      s.gold = 1000;
-      const before = s.gold;
+      s.gold = 4000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+
+      const beforePlanning = s.gold;
       for (let i = 0; i < 30; i++) {
         R.pieces.place(s, 'mirror', 3, 10);
         R.pieces.sell(s, 3, 10);
       }
-      const afterFast = s.gold;
+      const afterPlanning = s.gold;
+
+      /* Lamps get more expensive each time; buying and refunding must not pay. */
+      for (let i = 0; i < 8; i++) {
+        R.pieces.place(s, 'lamp', 3, 10);
+        R.pieces.sell(s, 3, 10);
+      }
+      const afterLamps = s.gold;
+
+      /* Now the same churn with a wave running. */
+      window.__REFRACT.startWave();
+      const beforeCombat = s.gold;
       for (let i = 0; i < 10; i++) {
         R.pieces.place(s, 'mirror', 3, 10);
         window.__REFRACT.step(3.5);
         R.pieces.sell(s, 3, 10);
       }
-      return { before: before, afterUndoWindow: afterFast, afterSell: s.gold };
+      return {
+        beforePlanning: beforePlanning, afterPlanning: afterPlanning,
+        afterLamps: afterLamps, beforeCombat: beforeCombat, afterCombat: s.gold
+      };
     });
-    ctx.log('  churn: ' + JSON.stringify(churn));
-    ctx.eq(churn.afterUndoWindow, churn.before, 'buy and sell inside the undo window is exactly free');
-    ctx.check(churn.afterSell < churn.before, 'buy and sell after the window always loses money');
+    ctx.log('  refunds: ' + JSON.stringify(churn));
+    ctx.eq(churn.afterPlanning, churn.beforePlanning, 'rearranging during planning is exactly free');
+    ctx.eq(churn.afterLamps, churn.afterPlanning, 'the rising lamp price cannot be arbitraged');
+    ctx.check(churn.afterCombat < churn.beforeCombat, 'selling mid-combat always costs something');
 
-    const earlyGain = by['informed, early calls'].earned - by['informed'].earned;
-    ctx.log('  early calling earned ' + earlyGain + ' extra gold (' +
-      Math.round(earlyGain / by['informed'].earned * 100) + '% of income) and ended on ' +
-      by['informed, early calls'].hp + ' hp in ' + by['informed, early calls'].time + 's');
-    ctx.check(earlyGain / by['informed'].earned < 0.12,
-      'the early-call bonus stays a tempo reward, not a snowball');
+    const rearranged = by['informed, rearranged in planning'];
+    ctx.log('  rearranging planner: ' + rearranged.phase + ', ' + rearranged.hp + ' hp, ' +
+      rearranged.earned + ' earned in ' + rearranged.time + 's');
+    ctx.eq(rearranged.earned, by['informed'].earned,
+      'moving pieces about during planning neither earns nor costs gold');
 
     /*
      * The session is a fixed five beats, so the spread that matters is how
@@ -2388,7 +2476,6 @@ module.exports = function (S) {
         const s = R.state;
         s.gold = 500;
         R.pieces.place(s, 'mirror', 7, 3, 1);
-        s.countdown = 9999;
         const e = R.enemies.spawn(s, 'mote');
         e.speed = 1;
         const dt = 1 / hz;
@@ -2539,7 +2626,7 @@ module.exports = function (S) {
           gold: parseInt(txt('statGold').replace(/[^0-9]/g, ''), 10),
           hp: parseInt(txt('statHp').replace(/[^0-9\/]/g, '').split('/')[0], 10),
           wave: parseInt(txt('statWave').replace(/[^0-9/]/g, '').split('/')[0], 10),
-          lit: parseInt(txt('statLight').replace(/[^0-9]/g, '').slice(1), 10),
+          lit: parseInt(document.querySelector('#statLight .val').textContent, 10),
           coreCost: core.querySelector('.a2').textContent.indexOf('MAX') >= 0
             ? null : parseInt(core.querySelector('.a2').textContent, 10),
           palette: pal,
@@ -2591,7 +2678,27 @@ module.exports = function (S) {
           }
         }
       }
-      await ctx.page.waitForTimeout(350);
+
+      /*
+       * Nothing starts by itself any more, so the run is driven exactly as a
+       * player drives it: shop while planning, then ask for the encounter.
+       */
+      const startable = await ctx.ev(function () {
+        const b = document.getElementById('btnNext');
+        return !b.classList.contains('dim');
+      });
+      if (startable && plan >= PLAN.length) await ctx.tap('#btnNext');
+      else if (startable && !(await ctx.ev(function () { return R.state.gold >= 20; }))) await ctx.tap('#btnNext');
+      else if (startable) {
+        const stuck = await ctx.ev(function () { return R.state.gold; });
+        if (plan < PLAN.length) {
+          const need = PLAN[plan];
+          const info = m.palette[need.k];
+          const price = need.k === 'core' ? m.coreCost : (info ? info.cost : null);
+          if (price === null || stuck < price || (info && info.locked)) await ctx.tap('#btnNext');
+        }
+      }
+      await ctx.page.waitForTimeout(250);
     }
 
     ctx.log('  offline run result: ' + result);
@@ -2612,13 +2719,17 @@ module.exports = function (S) {
     ctx.eq(m.lit, 1, 'the beam is back to its starting route');
     ctx.eq(m.overlay, null, 'no overlay after restart');
 
-    /* --- and a deliberate loss --- */
+    /* --- and a deliberate loss, buying nothing but still asking for waves --- */
     const lossStart = Date.now();
     let lost = null;
     while (Date.now() - lossStart < 240000) {
       m = await hud();
       if (m.overlay) { lost = m.overlay; break; }
-      await ctx.page.waitForTimeout(400);
+      const startable = await ctx.ev(function () {
+        return !document.getElementById('btnNext').classList.contains('dim');
+      });
+      if (startable) await ctx.tap('#btnNext');
+      await ctx.page.waitForTimeout(300);
     }
     ctx.log('  loss result: ' + lost);
     ctx.check(lost && lost.indexOf('THE CORE FELL') >= 0, 'placing nothing loses');
@@ -2666,11 +2777,11 @@ module.exports = function (S) {
       const beforePlay = R.state.beam.litRoadCount;
       R.startRun();
       const s = R.state;
-      return { litOnTitle: beforePlay, countdown: s.countdown, lit: s.beam.litRoadCount };
+      return { litOnTitle: beforePlay, phase: s.phase, lit: s.beam.litRoadCount };
     });
     ctx.log('  opening: ' + JSON.stringify(opening));
     ctx.eq(opening.litOnTitle, 1, 'the beam is already burning road behind the title card');
-    ctx.check(opening.countdown <= 15, 'the first wave arrives within fifteen seconds of PLAY');
+    ctx.eq(opening.phase, 'building', 'PLAY lands straight in planning, with the board live');
 
     /* --- every control does something --- */
     const controls = await st(function () {
@@ -2760,7 +2871,7 @@ module.exports = function (S) {
         });
         for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
         for (let w = 1; w <= 12; w++) {
-          window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+          window.__REFRACT.startWave();
           window.__REFRACT.stepUntil('s.phase !== "wave"', 300);
           if (s.phase === 'won' || s.phase === 'lost') break;
         }
@@ -2783,7 +2894,12 @@ module.exports = function (S) {
     });
     ctx.log('  endless: ' + JSON.stringify(endless));
     ctx.eq(endless.endless, true, 'endless mode continues after a win');
-    ctx.eq(endless.wave, await ctx.ev(function () { return R.BALANCE.WAVES.length + 1; }), 'endless starts one past the last beat');
+    const firstEndless = await ctx.ev(function () {
+      window.__REFRACT.startWave();
+      return { wave: R.state.wave, label: document.getElementById('statWave').textContent.replace(/\s+/g, '') };
+    });
+    ctx.eq(firstEndless.wave, await ctx.ev(function () { return R.BALANCE.WAVES.length + 1; }),
+      'the first endless wave is one past the last scripted encounter');
 
     /* --- rapid input does not break anything --- */
     const rapid = await st(function () {
@@ -2976,9 +3092,7 @@ module.exports = function (S) {
       for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
 
       s.wave = R.BALANCE.WAVES.length - 1;
-      window.__REFRACT.stepUntil('s.phase === "building"', 5);
-      s.countdown = 0;
-      window.__REFRACT.stepUntil('s.phase === "wave"', 5);
+      window.__REFRACT.startWave();
 
       /* Follow the boss until it dies or arrives. */
       const dt = R.TIMING.FIXED_STEP;
@@ -2993,8 +3107,6 @@ module.exports = function (S) {
           taken = b.maxHp - b.hp;
           steps++;
           if (b.hitAt === s.time) litSteps++;
-        } else if (seen) {
-          break;
         }
         if (s.phase === 'won' || s.phase === 'lost') break;
       }
@@ -3017,9 +3129,7 @@ module.exports = function (S) {
       window.__REFRACT.freeze(true);
       const s = R.state;
       s.wave = R.BALANCE.WAVES.length - 1;
-      window.__REFRACT.stepUntil('s.phase === "building"', 5);
-      s.countdown = 0;
-      window.__REFRACT.stepUntil('s.phase === "wave"', 5);
+      window.__REFRACT.startWave();
       const dt = R.TIMING.FIXED_STEP;
       for (let i = 0; i < 60 * 400; i++) {
         /* Keep the core topped up so only the breach rule can end the run. */
@@ -3046,7 +3156,7 @@ module.exports = function (S) {
       ].forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
       const log = [];
       for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
-        window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+        window.__REFRACT.startWave();
         window.__REFRACT.stepUntil('s.phase !== "wave"', 260);
         log.push({ w: w, hp: s.coreHp });
         if (s.phase === 'lost' || s.phase === 'won') break;
@@ -3054,8 +3164,209 @@ module.exports = function (S) {
       return { phase: s.phase, hp: s.coreHp, lit: s.beam.litRoadCount, log: log };
     });
     ctx.log('  static three mirrors: ' + JSON.stringify(staticRun));
-    ctx.eq(staticRun.phase, 'lost', 'the static three-mirror layout cannot clear the session');
-    await ctx.snap('a-static-layout-failed');
+
+    /*
+     * The same three mirrors, plus the tools and angles the encounters teach.
+     * The brief asks that adapting be worth doing and that a stable defence is
+     * not punished for being stable, so this compares the two honestly rather
+     * than requiring the static baseline to fail.
+     */
+    const adaptedRun = await st(function () {
+      window.__REFRACT.restart(2102);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.gold = 5000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      [['mirror', 7, 4, 1], ['mirror', 0, 4, 1], ['mirror', 0, 6, 0],
+       ['splitter', 7, 8, 1], ['lamp', 0, 2, 1], ['lamp', 0, 10, 1]
+      ].forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+      for (let i = 0; i < 4; i++) R.pieces.upgradeCore(s);
+      const log = [];
+      for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
+        window.__REFRACT.playWave(300);
+        log.push({ w: w, hp: s.coreHp });
+        if (s.phase === 'lost' || s.phase === 'won') break;
+      }
+      return { phase: s.phase, hp: s.coreHp, lit: s.beam.litRoadCount, log: log };
+    });
+    ctx.log('  adapted network:     ' + JSON.stringify(adaptedRun));
+
+    const staticBeforeBoss = staticRun.log[staticRun.log.length - 1].w;
+    ctx.check(adaptedRun.log.length >= staticRun.log.length,
+      'the adapted network gets at least as far as the static one');
+    ctx.check(adaptedRun.hp > staticRun.hp,
+      'and ends in better shape (' + adaptedRun.hp + ' HP against ' + staticRun.hp + ')');
+    /*
+     * The difference has to be visible before the boss, so victory does not
+     * rest on the boss-escape rule alone.
+     */
+    const cmp = Math.min(staticRun.log.length, adaptedRun.log.length) - 1;
+    ctx.check(cmp >= 1 && adaptedRun.log[cmp].hp > staticRun.log[cmp].hp,
+      'the gap is already open before the last encounter (encounter ' + (cmp + 1) + ': ' +
+      adaptedRun.log[cmp].hp + ' against ' + staticRun.log[cmp].hp + ')');
+    ctx.log('  the static baseline reached encounter ' + staticBeforeBoss + ' and finished ' + staticRun.phase);
+    await ctx.snap('a-static-vs-adapted');
+  };
+
+
+  /*
+   * The shield rule on its own, at identical beam power from all four sides.
+   * Absorption and shielding are separate constants and are checked apart.
+   */
+  S.shield = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    const rule = await st(function () {
+      window.__REFRACT.restart(4200);
+      const s = R.state;
+      const e = R.enemies.spawn(s, 'bulwark');
+      e.t = 11;
+      R.enemies.positionOf(s, e);
+      const out = { face: R.DIR_NAMES[e.face], by: {}, shield: R.BALANCE.ENEMY.bulwark.shield };
+      for (let d = 0; d < 4; d++) out.by[R.DIR_NAMES[d]] = R.enemies.exposure(e, d);
+      /* A body with no shield is equally exposed from every side. */
+      const m = R.enemies.spawn(s, 'mote');
+      m.t = 11;
+      R.enemies.positionOf(s, m);
+      out.mote = [0, 1, 2, 3].map(function (d) { return R.enemies.exposure(m, d); });
+      return out;
+    });
+    ctx.log('  exposure by beam direction: ' + JSON.stringify(rule));
+
+    ctx.eq(rule.face, 'E', 'the bulwark walks east along this sweep');
+    ctx.near(rule.by.W, 1 - rule.shield, 0.001, 'a beam running west meets its shield');
+    ctx.eq(rule.by.E, 1, 'a beam running east reaches its back in full');
+    ctx.eq(rule.by.N, 1, 'a beam crossing from the south reaches its flank in full');
+    ctx.eq(rule.by.S, 1, 'a beam crossing from the north reaches its flank in full');
+    ctx.check(rule.by.W > 0, 'the shield reduces damage rather than granting immunity');
+    ctx.eq(JSON.stringify(rule.mote), '[1,1,1,1]', 'an unshielded body is exposed from every side');
+
+    /*
+     * The same beam at the same power, against a body facing into it and a
+     * body facing away. The row 4 sweep is walked eastward and the row 6 sweep
+     * westward, so one mirror on the column 7 trunk lights each of them
+     * westward at full core power: into the face on row 4, into the back on
+     * row 6. No hand-set facing, because the walk direction decides it.
+     */
+    const dmg = await st(function () {
+      function run(row, index) {
+        window.__REFRACT.restart(4201);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.gold = 500;
+        const e = R.enemies.spawn(s, 'bulwark');
+        e.t = index;
+        e.speed = 0;
+        R.enemies.positionOf(s, e);
+        window.__REFRACT.place('mirror', 7, row, 1);
+        window.__REFRACT.step(1);
+        return {
+          face: R.DIR_NAMES[e.face],
+          lit: Math.round(s.beam.lit[R.grid.idx(e.cell % 8, Math.floor(e.cell / 8))] * 100) / 100,
+          taken: Math.round((e.maxHp - e.hp) * 100) / 100
+        };
+      }
+      return { front: run(4, 11), back: run(6, 18) };
+    });
+    ctx.log('  one second of the same beam: ' + JSON.stringify(dmg));
+    ctx.eq(dmg.front.face, 'E', 'the row 4 body walks into the beam');
+    ctx.eq(dmg.back.face, 'W', 'the row 6 body walks away from it');
+    ctx.eq(dmg.front.lit, dmg.back.lit, 'both stand in the same beam power');
+    ctx.near(dmg.front.taken / dmg.back.taken, 1 - rule.shield, 0.02,
+      'the same beam is cut to the shield fraction from the front (' +
+      dmg.front.taken + ' vs ' + dmg.back.taken + ')');
+    ctx.check(dmg.back.taken > dmg.front.taken * 2,
+      'reaching its back is clearly worth the trouble');
+
+    await ctx.snap('a-shielded-bulwark');
+  };
+
+
+  /* The two ways a run can end, and that each says which one happened. */
+  S.endings = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+    const overlayText = function () {
+      return st(function () {
+        const o = document.querySelector('#overlayRoot .overlay');
+        return o ? o.textContent.replace(/\s+/g, ' ').trim() : null;
+      });
+    };
+
+    /* --- the boss walks in and the core is still standing --- */
+    await st(function () {
+      window.__REFRACT.restart(6100);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.wave = R.BALANCE.WAVES.length - 1;
+      window.__REFRACT.startWave();
+      const dt = R.TIMING.FIXED_STEP;
+      for (let i = 0; i < 60 * 400; i++) {
+        s.coreHp = R.BALANCE.CORE_HP;
+        R.simStep(s, dt);
+        s.events.length = 0;
+        if (s.phase === 'lost' || s.phase === 'won') break;
+      }
+      R.ui.frame(s, 0.016);
+    });
+    const breach = await overlayText();
+    ctx.log('  breach screen: ' + breach);
+    ctx.check(breach.indexOf('REACHED THE CORE') >= 0,
+      'a boss breach names itself rather than reporting a spent core');
+    ctx.check(breach.indexOf('destroyed on the road') >= 0,
+      'and says why surviving it was not enough');
+    ctx.check(breach.indexOf('TRY AGAIN') >= 0, 'and offers another run');
+    await ctx.snap('a-boss-breach');
+
+    /* --- an ordinary loss, with the core actually spent --- */
+    await st(function () {
+      window.__REFRACT.restart(6101);
+      window.__REFRACT.freeze(true);
+      for (let i = 0; i < R.BALANCE.WAVES.length; i++) {
+        window.__REFRACT.playWave(300);
+        if (R.state.phase !== 'building') break;
+      }
+      R.ui.frame(R.state, 0.016);
+    });
+    const ordinary = await overlayText();
+    ctx.log('  ordinary loss: ' + ordinary);
+    ctx.check(ordinary.indexOf('THE CORE FELL') >= 0, 'an ordinary loss reports a fallen core');
+    ctx.check(ordinary.indexOf('REACHED THE CORE') < 0, 'and is not confused with a breach');
+    ctx.eq(await st(function () { return R.state.coreHp; }), 0, 'the core really is spent');
+    await ctx.snap('b-ordinary-loss');
+
+    /* --- the boss changes phase partway down the road --- */
+    const phases = await st(function () {
+      window.__REFRACT.restart(6102);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      const e = R.enemies.spawn(s, 'umbra');
+      const last = s.path.length - 1;
+      const seen = [];
+      const dt = R.TIMING.FIXED_STEP;
+      for (let i = 0; i < 60 * 200; i++) {
+        R.enemies.moveStep(s, dt);
+        for (let k = 0; k < s.events.length; k++) {
+          if (s.events[k].type === 'bossphase') {
+            seen.push({ phase: s.events[k].phase, at: Math.round(e.t / last * 100) / 100 });
+          }
+        }
+        s.events.length = 0;
+        if (e.t >= last) break;
+      }
+      return {
+        seen: seen, shieldNow: e.shield,
+        shieldAtSpawn: R.BALANCE.ENEMY.umbra.shield,
+        exposeAt: R.BALANCE.ENEMY.umbra.exposeAt,
+        walkSeconds: Math.round(last / e.speed)
+      };
+    });
+    ctx.log('  boss phases: ' + JSON.stringify(phases));
+    ctx.eq(phases.seen.length, 1, 'the phase change is announced exactly once');
+    ctx.near(phases.seen[0].at, phases.exposeAt, 0.03, 'it happens where the tuning says it does');
+    ctx.eq(phases.shieldNow, 0, 'and the shield is gone for the rest of the walk');
+    ctx.check(phases.shieldAtSpawn > 0, 'the boss did start the walk shielded');
+    ctx.check(phases.walkSeconds >= 40 && phases.walkSeconds <= 75,
+      'the boss encounter is a readable length (' + phases.walkSeconds + 's on the road)');
   };
 
 };

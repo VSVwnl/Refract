@@ -99,7 +99,6 @@
     var s = R.state;
     if (s.phase !== 'title') return;
     s.phase = 'building';
-    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
     R.emit(s, 'runstart', {});
   };
 
@@ -107,7 +106,6 @@
   R.restartRun = function (seed) {
     var s = R.newRun(seed);
     s.phase = 'building';
-    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
     R.emit(s, 'runstart', {});
     return s;
   };
@@ -118,7 +116,6 @@
     if (s.phase !== 'won') return;
     s.endless = true;
     s.phase = 'building';
-    s.countdown = R.BALANCE.COUNTDOWN;
     R.applyUnlocks(s, s.wave + 1);
     R.emit(s, 'endless', { wave: s.wave + 1 });
   };
@@ -142,30 +139,24 @@
     }
   };
 
+  /*
+   * Planning does not run on a clock. Combat is paused between encounters
+   * until the player asks for the next one, so reading the formation and
+   * rearranging the network are never charged against a timer.
+   */
+  R.canStartWave = function (s) {
+    return s.phase === 'building';
+  };
+
   R.startWave = function (s) {
+    if (s.phase !== 'building') return;
     s.wave++;
     s.spawnQueue = R.enemies.buildQueue(s.wave);
     s.spawnCursor = 0;
     s.waveEnemiesTotal = s.spawnQueue.length;
     s.waveTime = 0;
-    s.countdown = 0;
     s.phase = 'wave';
     R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
-  };
-
-  /* Gold on offer for skipping the rest of the countdown. */
-  R.earlyCallBonus = function (s) {
-    if (s.phase !== 'building') return 0;
-    return Math.ceil(Math.max(0, s.countdown) * R.BALANCE.EARLY_CALL_RATE);
-  };
-
-  R.callWaveEarly = function (s) {
-    if (s.phase !== 'building') return;
-    var bonus = R.earlyCallBonus(s);
-    s.gold += bonus;
-    s.goldEarned += bonus;
-    R.startWave(s);
-    R.emit(s, 'earlycall', { bonus: bonus });
   };
 
   R.finishWave = function (s) {
@@ -179,7 +170,6 @@
       return;
     }
     s.phase = 'building';
-    s.countdown = R.BALANCE.COUNTDOWN;
     R.applyUnlocks(s, s.wave + 1);
   };
 
@@ -187,16 +177,12 @@
 
   /*
    * One fixed step, in the order the systems depend on each other:
-   * countdown, spawning, movement, light and damage, deaths and leaks,
-   * then the phase transitions those results imply.
+   * spawning, movement, light and damage, deaths and leaks, then the phase
+   * transitions those results imply. Planning has no clock of its own, so a
+   * step during planning only advances time and refreshes the beam.
    */
   R.simStep = function (s, dt) {
     s.time += dt;
-
-    if (s.phase === 'building') {
-      s.countdown -= dt;
-      if (s.countdown <= 0) R.startWave(s);
-    }
 
     if (s.phase === 'wave') {
       s.waveTime += dt;

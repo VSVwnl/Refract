@@ -836,14 +836,14 @@
     dyn.enemyMote = body(new THREE.SphereGeometry(1, 10, 8), C.enemy.mote, 0x3a0d5c);
     dyn.enemyRunner = body(new THREE.ConeGeometry(0.85, 2.1, 6), C.enemy.runner, 0x0c4a48);
     dyn.enemySwarm = body(new THREE.TetrahedronGeometry(1.35), C.enemy.swarmling, 0x4a0e33);
-    dyn.enemyBrute = body(new THREE.BoxGeometry(1.5, 1.45, 1.5), C.enemy.brute, 0x1d1838);
+    dyn.enemyBulwark = body(new THREE.BoxGeometry(1.5, 1.45, 1.5), C.enemy.bulwark, 0x1d1838);
     dyn.enemyUmbra = body(new THREE.OctahedronGeometry(1.25, 0), C.enemy.umbra, 0x3d0f6b, 8);
 
     ENEMY_SHAPE.mote = 'enemyMote';
     ENEMY_SHAPE.runner = 'enemyRunner';
     ENEMY_SHAPE.swarmling = 'enemySwarm';
-    ENEMY_SHAPE.brute = 'enemyBrute';
-    ENEMY_SHAPE.bruteking = 'enemyBrute';
+    ENEMY_SHAPE.bulwark = 'enemyBulwark';
+    ENEMY_SHAPE.bruteking = 'enemyBulwark';
     ENEMY_SHAPE.umbra = 'enemyUmbra';
 
     /* Brutes wear a visible shell; it is what soaks up the light. */
@@ -861,6 +861,7 @@
     dyn.barBack = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 5);
     dyn.barFill = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 6);
     dyn.enemyObj = new THREE.Object3D();
+    dyn.shieldObj = new THREE.Object3D();
   }
 
   Filler.prototype.pushBillboard = function (x, y, z, sx, sy, colorHex) {
@@ -879,7 +880,7 @@
     return ENEMY_SHAPE[type] || 'enemyMote';
   }
 
-  var SPIN = { mote: 0.8, runner: 0, swarmling: 2.4, brute: 0.25, bruteking: 0.3, umbra: 0.5 };
+  var SPIN = { mote: 0.8, runner: 0, swarmling: 2.4, bulwark: 0.25, bruteking: 0.3, umbra: 0.5 };
 
   function drawEnemies(state) {
     var fills = {};
@@ -893,6 +894,7 @@
     var back = new Filler(dyn.barBack);
     var fill = new Filler(dyn.barFill);
     var o = dyn.enemyObj;
+    var shieldPose = dyn.shieldObj;
     var list = state.enemies;
 
     for (var i = 0; i < list.length; i++) {
@@ -904,7 +906,15 @@
       var y = rad + 0.06;
       var hit = state.time - e.hitAt;
       var flash = hit >= 0 && hit < 0.09 ? 1 : 0;
-      var tint = flash ? 0xffffff : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
+      /*
+       * A hit that the shield turned away and a hit that landed have to look
+       * different. A deflection reads as a hard pale-blue flare on the face;
+       * a landed hit keeps the white burn.
+       */
+      var deflected = e.shield > 0 && state.time - e.shieldedAt < 0.09;
+      var tint = flash
+        ? (deflected ? 0x9fd8ff : 0xffffff)
+        : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
 
       o.position.set(e.x, y, e.z);
       o.scale.set(rad, rad, rad);
@@ -919,8 +929,24 @@
       }
       fills[shapeKey(e.type)].pushObject(o, tint);
 
-      if (e.type === 'brute' || e.type === 'bruteking') {
-        shell.pushObject(o, R.util.mixColor(0x000000, flash ? 0xffffff : 0x8a72ff, 0.09 + 0.07 * fade));
+      /*
+       * The shell is the shield made visible. It sits on the face the body is
+       * walking towards, brightens when light is turned away by it, and is
+       * dropped entirely once a boss enters its exposed phase, so the change
+       * is legible without reading a number.
+       */
+      if (e.shield > 0) {
+        var shieldCol = deflected ? 0xbfe4ff : (flash ? 0xffffff : 0x8a72ff);
+        var shieldMix = 0.09 + 0.07 * fade + (deflected ? 0.4 : 0);
+        var face = R.grid.DC[e.face] !== undefined ? e.face : R.S;
+        shieldPose.position.set(
+          e.x + R.grid.DC[face] * rad * 0.62,
+          y,
+          e.z + R.grid.DR[face] * rad * 0.62
+        );
+        shieldPose.scale.set(rad, rad, rad);
+        shieldPose.quaternion.set(0, 0, 0, 1);
+        shell.pushObject(shieldPose, R.util.mixColor(0x000000, shieldCol, shieldMix));
       }
 
       if (e.boss) {
@@ -1202,7 +1228,7 @@
             rd.burst(e.x, e.z, 0xffffff, 10, { speed: 2.2, size: 0.16, ttl: 0.7 });
             rd.shake(9, 0.32);
             rd.hitStop = 0.06;
-          } else if (e.enemy === 'brute') {
+          } else if (e.enemy === 'bulwark') {
             rd.burst(e.x, e.z, col, 10, { speed: 2.6, size: 0.19, ttl: 0.65 });
             rd.shake(4, 0.13);
           } else {

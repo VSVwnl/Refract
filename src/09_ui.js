@@ -162,7 +162,7 @@
     }
     var next = s.wave + 1;
     return 'NEXT ' + pips(R.enemies.composition(next)) +
-      '&middot; in <span class="em">' + Math.max(0, Math.ceil(s.countdown)) + 's</span>';
+      '&middot; <span class="em">' + R.enemies.threatNote(next) + '</span>';
   }
 
   /* ---------- HUD ---------- */
@@ -174,15 +174,17 @@
     setText(el.waveVal, String(s.wave));
     setText(el.waveSub, s.endless ? '' : '/' + B.WAVES.length);
     /*
-     * Two readings, not one: PWR is the light actually landing on enemies
-     * (damage per second) and COV is how much of the road is lit. A wide but
-     * weak network scores well on COV and badly on PWR, which is the point.
+     * Coverage is how much of the road is lit. It is deliberately a secondary
+     * reading: it says how far the network reaches, not how much damage it
+     * does, and the two come apart whenever a formation shields itself. The
+     * damage figure behind that distinction is development telemetry, not
+     * something to put in front of the player.
      */
-    var pwr = Math.round(s.beam.pressure);
-    if (pwr > lastPwr) ui.pulseLight();
-    lastPwr = pwr;
-    setText(el.pwrVal, String(pwr));
-    setText(el.covVal, 'COV ' + s.beam.litRoadCount);
+    var cov = s.beam.litRoadCount;
+    if (cov > lastCov) ui.pulseLight();
+    lastCov = cov;
+    setText(el.covVal, String(cov));
+    setText(el.covSub, '/' + s.roadCells);
 
     var html = stripHtml(s);
     if (cache.strip !== html) {
@@ -194,7 +196,7 @@
   /* ---------- events ---------- */
 
   var goldFloaterAt = 0;
-  var lastPwr = 0;
+  var lastCov = 0;
 
   ui.handleEvents = function (s) {
     for (var i = 0; i < s.events.length; i++) {
@@ -247,11 +249,11 @@
           ui.banner(s.endless ? 'ENDLESS ' + e.wave : 'WAVE ' + e.wave, null, 1.5);
           break;
         case 'runstart':
-          lastPwr = 0;
+          lastCov = 0;
           ui.hint(s, 'start', 7);
           break;
         case 'spawn':
-          if (e.enemy === 'brute' || e.enemy === 'bruteking') ui.hint(s, 'brute', 6);
+          if (e.enemy === 'bulwark' || e.enemy === 'bruteking') ui.hint(s, 'bulwark', 6);
           if (e.enemy === 'swarmling') ui.hint(s, 'swarm', 6);
           break;
         case 'endless':
@@ -342,8 +344,8 @@
    * actually needs to solve, rather than the most numerous leaker.
    */
   var DEFEAT_TIPS = {
-    brute: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
-    bruteking: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
+    bulwark: 'A Bulwark carries its shield on the face it walks towards, so light meeting it head on mostly bounces off. Reach its flank or its back with a second line, or bring a return pass the other way.',
+    bruteking: 'A Brute King shields its front and soaks up the rest, so everything walking behind it is in shadow. Light it from another direction.',
     umbra: 'Umbra absorbs almost everything. Upgrade the core and light the long segments so it is burning for as long as possible.',
     swarmling: 'Swarms drain a beam fast: each one takes a bite before the light reaches the next. Split the light, or add a Lamp as a second source.',
     runner: 'Runners cross a single lit cell in half a second. Light a whole road segment lengthwise so they stay in the light.',
@@ -365,17 +367,33 @@
     return node('p', 'statline', label + ' <b>' + value + '</b>');
   }
 
+  /*
+   * A run can end two ways, and the screen has to say which. Surviving the
+   * boss is not a win, so a breach gets its own heading and its own reason
+   * rather than being reported as a core that ran out of health.
+   */
   function buildDefeat(wrap) {
     var s = R.state;
-    var h = node('h2', null, 'THE CORE FELL');
+    var breach = s.bossBreached;
+    var name = breach === 'umbra' ? 'UMBRA' : 'THE BOSS';
+    var h = node('h2', null, breach ? name + ' REACHED THE CORE' : 'THE CORE FELL');
     h.style.color = '#ff5d6c';
     wrap.appendChild(h);
+    if (breach) {
+      wrap.appendChild(node('p', 'reason',
+        'It had to be destroyed on the road. The core was still standing at ' +
+        Math.max(0, s.coreHp) + ' of ' + B.CORE_HP + ' HP, and that is not enough.'));
+    }
     wrap.appendChild(statLine('Reached wave', s.wave + ' of ' + B.WAVES.length));
     wrap.appendChild(statLine('Score', s.score));
     if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
-    wrap.appendChild(node('div', 'tip', defeatTip(s)));
+    wrap.appendChild(node('div', 'tip', breach ? BREACH_TIP : defeatTip(s)));
     wrap.appendChild(button('bigbtn', 'TRY AGAIN', function () { R.restartRun(); }));
   }
+
+  var BREACH_TIP = 'Umbra advances behind its shield, then drops it about halfway down the road. ' +
+    'Light that meets the shield head on is mostly turned away, so reach its flank or its back, ' +
+    'or add a return pass. Once the shield is down, everything you have built counts.';
 
   function buildVictory(wrap) {
     var s = R.state;
@@ -427,8 +445,7 @@
       else R.pause();
     });
     el.btnNext.addEventListener('click', function () {
-      var s = R.state;
-      if (s.phase === 'building') R.callWaveEarly(s);
+      R.startWave(R.state);
     });
     el.btnCore.addEventListener('click', function () {
       R.pieces.upgradeCore(R.state);
@@ -547,11 +564,13 @@
         : cost + '<span class="c">&#9670;</span>';
       el.btnCore.classList.toggle('dim', cost === null || s.gold < cost);
     }
-    var bonus = R.earlyCallBonus(s);
-    var nextStamp = s.phase + '|' + bonus;
+    var canStart = R.canStartWave(s);
+    var nextStamp = s.phase + '|' + s.wave;
     if (cache.next !== nextStamp) {
       cache.next = nextStamp;
-      el.btnNext.querySelector('.a2').innerHTML = '&#9654; +' + bonus + '<span class="c">&#9670;</span>';
+      el.btnNext.querySelector('.a1').textContent = canStart ? 'START WAVE ' + (s.wave + 1) : 'WAVE ' + s.wave;
+      el.btnNext.querySelector('.a2').innerHTML = canStart ? '&#9654;' : 'RUNNING';
+      el.btnNext.classList.toggle('dim', !canStart);
     }
   }
 
@@ -670,7 +689,7 @@
     start: 'Tap a tile on the beam to bend it along the road.',
     placed: 'Tap a placed piece to flip, move or sell it.',
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
-    brute: 'Brutes soak up the light. Anything walking behind one is shielded.',
+    bulwark: 'A Bulwark shields the face it walks towards. Hit its flank or its back.',
     swarm: 'Swarms drain a beam fast. Split it, or add a second source.',
     splitter: 'SPLITTER unlocked: passes and bends at the same time, half the power each way.',
     reflector: 'REFLECTOR unlocked: sends the light back down the same chain at 60%.',
@@ -838,8 +857,8 @@
     el.waveLbl = key(el.statWave.querySelector('.lbl'), 'waveLbl');
     el.waveVal = key(el.statWave.querySelector('.val'), 'waveVal');
     el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
-    el.pwrVal = key(el.statLight.querySelector('.val'), 'pwrVal');
-    el.covVal = key(el.statLight.querySelector('.sub'), 'covVal');
+    el.covVal = key(el.statLight.querySelector('.val'), 'covVal');
+    el.covSub = key(el.statLight.querySelector('.sub'), 'covSub');
     el.strip = byId('strip');
     el.stripText = key(byId('stripText'), 'strip');
     el.overlayRoot = byId('overlayRoot');
@@ -887,7 +906,7 @@
     cache = {};
     stripNotice = '';
     stripNoticeUntil = 0;
-    lastPwr = 0;
+    lastCov = 0;
     vignetteLevel = 0;
     if (vignette) vignette.style.opacity = '0';
     ui.clearBanners();

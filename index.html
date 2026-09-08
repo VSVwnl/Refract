@@ -644,6 +644,16 @@ body.wide #sideNote { display: block; }
 .statline { font-size: 14px; color: var(--ink); letter-spacing: 0.04em; }
 .statline b { color: var(--gold); }
 
+/* The one-line reason a run ended, above the advice. */
+.reason {
+  max-width: 330px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #ffb8c0;
+  text-align: center;
+}
+
 .tip {
   max-width: 330px;
   font-size: 13px;
@@ -721,7 +731,7 @@ body.wide #sideNote { display: block; }
         <div class="stat" id="statHp"><span class="ico hp">&#9829;</span><span class="val">20</span><span class="sub">/20</span></div>
         <div class="stat" id="statGold"><span class="ico gold">&#9670;</span><span class="val">40</span></div>
         <div class="stat" id="statWave"><span class="lbl">WAVE</span><span class="val">0</span><span class="sub">/5</span></div>
-        <div class="stat" id="statLight"><span class="lbl">PWR</span><span class="val">0</span><span class="sub">COV 0</span></div>
+        <div class="stat" id="statLight"><span class="lbl">COVER</span><span class="val">0</span><span class="sub">/31</span></div>
       </div>
       <div id="hudButtons">
         <button type="button" class="iconbtn" id="btnPause" aria-label="Pause"><i class="glyph-pause"></i></button>
@@ -742,7 +752,7 @@ body.wide #sideNote { display: block; }
 
     <div id="actionRow">
       <button type="button" class="actbtn" id="btnCore"><span class="a1">CORE &#9650;</span><span class="a2">Lv1</span></button>
-      <button type="button" class="actbtn primary" id="btnNext"><span class="a1">NEXT WAVE</span><span class="a2">&#9654;</span></button>
+      <button type="button" class="actbtn primary" id="btnNext"><span class="a1">START WAVE 1</span><span class="a2">&#9654;</span></button>
     </div>
 
     <div id="palette"></div>
@@ -798,41 +808,70 @@ body.wide #sideNote { display: block; }
     LAMP_COST_STEP: 20,
     SELL_RATE: 0.7,
     UNDO_WINDOW: 3.0,
-    MOVE_REFORM: 0.75,
-    COUNTDOWN: 10,
-    FIRST_COUNTDOWN: 10,
+    /*
+     * A piece is transparent to light while it re-forms after a move. Editing
+     * during planning is free; this delay only applies mid-combat, so it is
+     * short enough to stay a tactical cost rather than a punishment.
+     */
+    MOVE_REFORM: 0.3,
     GROUP_GAP: 1.5,
-    EARLY_CALL_RATE: 1.0,
-    WAVE_CLEAR_BASE: 30,
-    WAVE_CLEAR_PER_WAVE: 22,
-    HP_MULT_PER_WAVE: 0.34,
-    UNLOCK_WAVE: { splitter: 2, reflector: 3, lamp: 4 },
+    WAVE_CLEAR_BASE: 24,
+    WAVE_CLEAR_PER_WAVE: 12,
+    HP_MULT_PER_WAVE: 0.2,
+    UNLOCK_WAVE: { splitter: 3, reflector: 4, lamp: 5 },
     SPEED_OPTIONS: [1, 2],
+    /*
+     * Two separate constants govern how a body interacts with light, so they
+     * can be tuned and tested independently:
+     *
+     *   absorb  how much of the beam this body removes from what continues
+     *           behind it. This is what shields the enemies further along.
+     *   shield  how much incoming damage is deflected when light meets this
+     *           enemy head on, in the face it is walking towards. Light that
+     *           reaches its flank or its back is not reduced at all.
+     *
+     * A shield reduces damage; it is never total immunity. Attacking from
+     * another direction, adding a return pass, or simply lighting more of the
+     * road are all legitimate answers with different costs.
+     */
     ENEMY: {
-      mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, gold: 4,   leak: 1,  radius: 0.28 },
-      runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, gold: 5,   leak: 1,  radius: 0.22 },
-      swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, gold: 1,   leak: 1,  radius: 0.14 },
-      brute:     { hp: 120, speed: 0.55, absorb: 0.70, gold: 16,  leak: 3,  radius: 0.36 },
-      bruteking: { hp: 460, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
-      umbra:     { hp: 520, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
+      mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, shield: 0,    gold: 4,   leak: 1,  radius: 0.28 },
+      runner:    { hp: 16,  speed: 1.9,  absorb: 0.10, shield: 0,    gold: 5,   leak: 1,  radius: 0.22 },
+      swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, shield: 0,    gold: 1,   leak: 1,  radius: 0.14 },
+      bulwark:   { hp: 95,  speed: 0.55, absorb: 0.55, shield: 0.60, gold: 18,  leak: 2,  radius: 0.36 },
+      bruteking: { hp: 460, speed: 0.45, absorb: 0.70, shield: 0.60, gold: 50,  leak: 6,  radius: 0.50, boss: true },
+      /*
+       * Umbra advances behind its shield, then drops it for the rest of the
+       * walk. `exposeAt` is the fraction of the road at which that happens, so
+       * the armoured phase rewards reaching its back or bringing a return
+       * pass, and the exposed phase rewards everything the player has built.
+       */
+      umbra:     { hp: 430, speed: 0.55, absorb: 0.70, shield: 0.70, exposeAt: 0.45, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
     /*
-     * Five encounter beats, each testing a different distribution of light.
-     * Each group is [type, count, gapSeconds]; groups run in order with
-     * GROUP_GAP between them.
+     * Eight encounters. Each one either introduces a decision, combines ideas
+     * already taught, or pays one off. Each group is [type, count, gapSeconds];
+     * groups run in order with GROUP_GAP between them.
      *
-     * 1 Opening      one slow group; connect a route change to damage.
-     * 2 Shield       a brute walks in front and shields the motes behind it.
-     * 3 Distribution a swarm and an armoured target want different answers.
-     * 4 Pressure     two lanes' worth of traffic at once; one angle is short.
-     * 5 Umbra        the boss, escorted. It must die and must never arrive.
+     * 1 first light   one slow group; place a mirror and watch it burn.
+     * 2 absorption    a small clump that shields itself; then the first upgrade.
+     * 3 distribution  two clusters close together; one line cannot cover both.
+     * 4 the shield    Bulwarks walk in facing the light; reflectors unlock.
+     * 5 fast and deep a swarm behind a Bulwark; lamps unlock, then the second
+     *                 upgrade choice.
+     * 6 payoff        the specialisation chosen above gets to work.
+     * 7 everything    all four threats, and the last spending decision.
+     * 8 Umbra         armoured advance, then an exposed phase with escorts.
      */
     WAVES: [
       [ ['mote', 5, 1.2] ],
-      [ ['brute', 1, 0], ['mote', 7, 0.9] ],
-      [ ['swarmling', 10, 0.28], ['brute', 1, 0], ['runner', 5, 0.6] ],
-      [ ['brute', 2, 1.4], ['mote', 8, 0.7], ['swarmling', 10, 0.25], ['runner', 6, 0.5] ],
-      [ ['mote', 5, 0.7], ['brute', 2, 1.2], ['umbra', 1, 0], ['runner', 6, 0.5] ]
+      [ ['mote', 4, 0.5], ['mote', 5, 0.9] ],
+      [ ['runner', 4, 0.5], ['mote', 6, 0.7] ],
+      [ ['bulwark', 2, 2.0], ['mote', 5, 0.8] ],
+      [ ['bulwark', 1, 0], ['swarmling', 12, 0.25], ['runner', 5, 0.5] ],
+      [ ['bulwark', 2, 1.6], ['runner', 6, 0.45], ['mote', 5, 0.7] ],
+      [ ['swarmling', 12, 0.22], ['bulwark', 2, 1.4], ['runner', 6, 0.45], ['mote', 6, 0.6] ],
+      [ ['umbra', 1, 0], ['runner', 5, 0.6], ['bulwark', 1, 0], ['mote', 5, 0.7] ]
     ],
     ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
   };
@@ -890,7 +929,7 @@ body.wide #sideNote { display: block; }
       mote: 0x2a1740,
       runner: 0x123536,
       swarmling: 0x140f1c,
-      brute: 0x1a1526,
+      bulwark: 0x1a1526,
       bruteking: 0x241a10,
       umbra: 0x140b22
     },
@@ -898,7 +937,7 @@ body.wide #sideNote { display: block; }
       mote: 0xd63bff,
       runner: 0x35e0d0,
       swarmling: 0xff56b0,
-      brute: 0x8a7bd6,
+      bulwark: 0x8a7bd6,
       bruteking: 0xffc247,
       umbra: 0xb14dff
     }
@@ -1364,7 +1403,7 @@ body.wide #sideNote { display: block; }
         case 'undo': audio.play('flip'); audio.play('gold'); break;
         case 'denied': audio.play('deny'); break;
         case 'kill':
-          audio.play(e.boss ? 'killBig' : (e.enemy === 'brute' ? 'killBig' : (e.enemy === 'swarmling' ? 'killSmall' : 'kill')));
+          audio.play(e.boss ? 'killBig' : (e.enemy === 'bulwark' ? 'killBig' : (e.enemy === 'swarmling' ? 'killSmall' : 'kill')));
           audio.play('gold');
           break;
         case 'leak': audio.play('leak'); break;
@@ -1479,7 +1518,6 @@ body.wide #sideNote { display: block; }
       pausedFrom: null,
       endless: false,
       wave: 0,
-      countdown: B.FIRST_COUNTDOWN,
       waveTime: 0,
       time: 0,
       speed: 1,
@@ -1506,8 +1544,8 @@ body.wide #sideNote { display: block; }
       waveEnemiesLeft: 0,
       /* The beam result object owns its own pooled segment records. */
       beam: R.beam.makeResult(),
-      leaksBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
-      damageBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
+      leaksBy: { mote: 0, runner: 0, swarmling: 0, bulwark: 0, bruteking: 0, umbra: 0 },
+      damageBy: { mote: 0, runner: 0, swarmling: 0, bulwark: 0, bruteking: 0, umbra: 0 },
       ui: {
         selectedType: 'mirror',
         selectedPieceId: null,
@@ -1812,14 +1850,27 @@ body.wide #sideNote { display: block; }
         for (var k = 0; k < ordered.length; k++) {
           var e = ordered[k];
           /*
-           * Pressure counts the power that reaches each enemy, so it is the
-           * same number whether this is a preview (dt 0) or a live step.
+           * How much of this beam lands depends on which side of the enemy it
+           * arrives at, so a shielded body takes far less from light meeting
+           * its face than from light reaching its flank or its back.
            */
-          out.pressure += power;
+          var exposure = R.enemies.exposure(e, dir);
+          var landed = power * exposure;
+          /*
+           * Pressure counts the damage actually landing, so it is the same
+           * number whether this is a preview (dt 0) or a live step.
+           */
+          out.pressure += landed;
           if (stepDt > 0) {
-            e.damage += power * stepDt;
+            e.damage += landed * stepDt;
             e.hitAt = nowTime;
+            if (exposure < 1) e.shieldedAt = nowTime;
+            else if (e.shield) e.exposedAt = nowTime;
           }
+          /*
+           * Absorption is a property of the body, not of the shield: what
+           * continues past this enemy is reduced the same way from any angle.
+           */
           power *= (1 - e.absorb);
           if (power < B.MIN_POWER) { power = 0; break; }
         }
@@ -2074,9 +2125,11 @@ body.wide #sideNote { display: block; }
 
   function acquire() {
     return pool.length ? pool.pop() : {
-      id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0,
-      gold: 0, leak: 0, radius: 0, boss: false,
-      damage: 0, hitAt: -1, x: 0, z: 0, cell: -1, spawnAt: 0
+      id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0, shield: 0,
+      gold: 0, leak: 0, radius: 0, boss: false, face: 0,
+      shield0: 0, exposeAt: 0, phase: 1,
+      damage: 0, hitAt: -1, shieldedAt: -1, exposedAt: -1,
+      x: 0, z: 0, cell: -1, spawnAt: 0
     };
   }
 
@@ -2115,7 +2168,7 @@ body.wide #sideNote { display: block; }
       groups.push(['swarmling', 8, 0.25]);
       groups.push(['mote', Math.ceil(count / 2), 0.6]);
     } else {
-      groups.push(['brute', Math.max(2, Math.floor(count / 4)), 1.2]);
+      groups.push(['bulwark', Math.max(2, Math.floor(count / 4)), 1.2]);
       groups.push(['mote', count, 0.6]);
     }
     if (wave % B.ENDLESS.KING_EVERY === 0) groups.unshift(['bruteking', 1, 0]);
@@ -2157,6 +2210,25 @@ body.wide #sideNote { display: block; }
     return out;
   };
 
+  /*
+   * One short line naming what is coming and why it matters. It describes the
+   * formation, never the player's layout, so the preview cannot be accused of
+   * reacting to what has been built.
+   */
+  en.threatNote = function (wave) {
+    var comp = en.composition(wave);
+    var has = {};
+    for (var i = 0; i < comp.length; i++) has[comp[i].type] = comp[i].count;
+    if (has.umbra) return 'Umbra, shielded, with escorts';
+    if (has.bruteking) return 'a Brute King leads';
+    if (has.bulwark && has.swarmling) return 'a shielded leader, then a swarm';
+    if (has.bulwark && comp[0].type === 'bulwark') return 'armoured leaders, others behind';
+    if (has.bulwark) return 'armoured bodies in the line';
+    if (has.swarmling) return 'a swarm that drains the beam';
+    if (has.runner) return 'runners cross the light fast';
+    return 'a slow opening group';
+  };
+
   /* ---------- spawning ---------- */
 
   en.spawn = function (s, type) {
@@ -2169,12 +2241,19 @@ body.wide #sideNote { display: block; }
     e.t = -1;
     e.speed = def.speed * en.speedMult(s.wave);
     e.absorb = def.absorb;
+    e.shield = def.shield || 0;
+    e.shield0 = e.shield;
+    e.exposeAt = def.exposeAt || 0;
+    e.phase = 1;
     e.gold = def.gold;
     e.leak = def.leak;
     e.radius = def.radius;
     e.boss = !!def.boss;
     e.damage = 0;
     e.hitAt = -1;
+    e.shieldedAt = -1;
+    e.exposedAt = -1;
+    e.face = R.S;
     e.cell = -1;
     e.spawnAt = s.time;
     positionOf(s, e);
@@ -2214,7 +2293,31 @@ body.wide #sideNote { display: block; }
     var idx = Math.round(e.t);
     if (idx < 0) e.cell = -1;
     else e.cell = s.path[Math.min(idx, s.path.length - 1)].i;
+    e.face = facing(pa, pb, e.face);
   }
+
+  /*
+   * Which way an enemy is looking, which is simply the way it is walking. The
+   * road is axis aligned, so this is one of the four direction codes. A step
+   * that covers no ground keeps the previous facing.
+   */
+  function facing(from, to, previous) {
+    var dx = to.x - from.x;
+    var dz = to.z - from.z;
+    if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? R.E : R.W;
+    if (Math.abs(dz) > 0) return dz > 0 ? R.S : R.N;
+    return previous;
+  }
+
+  /*
+   * How much of an incoming beam actually lands, given the direction the light
+   * is travelling. Light meeting the face this enemy walks towards is cut by
+   * its shield; light arriving at a flank or from behind lands in full.
+   */
+  en.exposure = function (e, beamDir) {
+    if (!e.shield) return 1;
+    return beamDir === R.grid.opposite(e.face) ? 1 - e.shield : 1;
+  };
 
   en.positionOf = positionOf;
 
@@ -2246,10 +2349,22 @@ body.wide #sideNote { display: block; }
 
   en.moveStep = function (s, dt) {
     var list = s.enemies;
+    var last = s.path.length - 1;
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
       e.t += e.speed * dt;
       positionOf(s, e);
+      /*
+       * A boss that advances behind a shield drops it partway down the road.
+       * The change is announced so the renderer and audio can telegraph it,
+       * and it happens on distance travelled rather than on damage taken, so
+       * the player can see it coming and prepare for it.
+       */
+      if (e.phase === 1 && e.exposeAt > 0 && e.t >= last * e.exposeAt) {
+        e.phase = 2;
+        e.shield = 0;
+        R.emit(s, 'bossphase', { enemy: e.type, id: e.id, phase: 2, x: e.x, z: e.z });
+      }
     }
   };
 
@@ -2320,6 +2435,16 @@ body.wide #sideNote { display: block; }
   var B = R.BALANCE;
 
   R.pieces = {};
+
+  /*
+   * Planning is the forgiving phase: pieces can be moved, turned and sold back
+   * at the price actually paid, so experimenting with a layout costs nothing.
+   * Once a wave is running, edits carry a re-form delay and sales take the
+   * sell rate.
+   */
+  R.pieces.isPlanning = function (s) {
+    return s.phase === 'building' || s.phase === 'title';
+  };
 
   R.pieces.cost = function (s, type) {
     if (type === 'lamp') return B.PIECE_COST.lamp + B.LAMP_COST_STEP * s.lampsPlaced;
@@ -2470,8 +2595,13 @@ body.wide #sideNote { display: block; }
     R.beam.recompute(s);
   }
 
-  /* Full price back inside the undo window, otherwise the sell rate. */
+  /*
+   * The refund is the price this piece was actually paid for while planning or
+   * inside the undo window, and the sell rate once a wave is running. It is
+   * never more than was paid, so a rising lamp price cannot be arbitraged.
+   */
   R.pieces.refundFor = function (s, p) {
+    if (R.pieces.isPlanning(s)) return p.cost;
     var u = s.ui.undo;
     if (u && u.pieceId === p.id && s.time <= u.until) return p.cost;
     return Math.floor(p.cost * B.SELL_RATE);
@@ -2504,8 +2634,11 @@ body.wide #sideNote { display: block; }
     p.c = toC;
     p.r = toR;
     p.i = R.grid.idx(toC, toR);
-    /* A moved piece is transparent to light while it re-forms. */
-    p.inactiveUntil = s.time + B.MOVE_REFORM;
+    /*
+     * A piece moved mid-combat is transparent to light while it re-forms.
+     * Rearranging during planning is free.
+     */
+    p.inactiveUntil = R.pieces.isPlanning(s) ? -1 : s.time + B.MOVE_REFORM;
     s.pieces.set(p.i, p);
     s.ui.moveMode = false;
     R.beam.recompute(s);
@@ -3385,14 +3518,14 @@ body.wide #sideNote { display: block; }
     dyn.enemyMote = body(new THREE.SphereGeometry(1, 10, 8), C.enemy.mote, 0x3a0d5c);
     dyn.enemyRunner = body(new THREE.ConeGeometry(0.85, 2.1, 6), C.enemy.runner, 0x0c4a48);
     dyn.enemySwarm = body(new THREE.TetrahedronGeometry(1.35), C.enemy.swarmling, 0x4a0e33);
-    dyn.enemyBrute = body(new THREE.BoxGeometry(1.5, 1.45, 1.5), C.enemy.brute, 0x1d1838);
+    dyn.enemyBulwark = body(new THREE.BoxGeometry(1.5, 1.45, 1.5), C.enemy.bulwark, 0x1d1838);
     dyn.enemyUmbra = body(new THREE.OctahedronGeometry(1.25, 0), C.enemy.umbra, 0x3d0f6b, 8);
 
     ENEMY_SHAPE.mote = 'enemyMote';
     ENEMY_SHAPE.runner = 'enemyRunner';
     ENEMY_SHAPE.swarmling = 'enemySwarm';
-    ENEMY_SHAPE.brute = 'enemyBrute';
-    ENEMY_SHAPE.bruteking = 'enemyBrute';
+    ENEMY_SHAPE.bulwark = 'enemyBulwark';
+    ENEMY_SHAPE.bruteking = 'enemyBulwark';
     ENEMY_SHAPE.umbra = 'enemyUmbra';
 
     /* Brutes wear a visible shell; it is what soaks up the light. */
@@ -3410,6 +3543,7 @@ body.wide #sideNote { display: block; }
     dyn.barBack = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 5);
     dyn.barFill = makeInstanced(quad, new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_BARS, 6);
     dyn.enemyObj = new THREE.Object3D();
+    dyn.shieldObj = new THREE.Object3D();
   }
 
   Filler.prototype.pushBillboard = function (x, y, z, sx, sy, colorHex) {
@@ -3428,7 +3562,7 @@ body.wide #sideNote { display: block; }
     return ENEMY_SHAPE[type] || 'enemyMote';
   }
 
-  var SPIN = { mote: 0.8, runner: 0, swarmling: 2.4, brute: 0.25, bruteking: 0.3, umbra: 0.5 };
+  var SPIN = { mote: 0.8, runner: 0, swarmling: 2.4, bulwark: 0.25, bruteking: 0.3, umbra: 0.5 };
 
   function drawEnemies(state) {
     var fills = {};
@@ -3442,6 +3576,7 @@ body.wide #sideNote { display: block; }
     var back = new Filler(dyn.barBack);
     var fill = new Filler(dyn.barFill);
     var o = dyn.enemyObj;
+    var shieldPose = dyn.shieldObj;
     var list = state.enemies;
 
     for (var i = 0; i < list.length; i++) {
@@ -3453,7 +3588,15 @@ body.wide #sideNote { display: block; }
       var y = rad + 0.06;
       var hit = state.time - e.hitAt;
       var flash = hit >= 0 && hit < 0.09 ? 1 : 0;
-      var tint = flash ? 0xffffff : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
+      /*
+       * A hit that the shield turned away and a hit that landed have to look
+       * different. A deflection reads as a hard pale-blue flare on the face;
+       * a landed hit keeps the white burn.
+       */
+      var deflected = e.shield > 0 && state.time - e.shieldedAt < 0.09;
+      var tint = flash
+        ? (deflected ? 0x9fd8ff : 0xffffff)
+        : R.util.mixColor(0x000000, 0xffffff, 0.35 + 0.65 * fade);
 
       o.position.set(e.x, y, e.z);
       o.scale.set(rad, rad, rad);
@@ -3468,8 +3611,24 @@ body.wide #sideNote { display: block; }
       }
       fills[shapeKey(e.type)].pushObject(o, tint);
 
-      if (e.type === 'brute' || e.type === 'bruteking') {
-        shell.pushObject(o, R.util.mixColor(0x000000, flash ? 0xffffff : 0x8a72ff, 0.09 + 0.07 * fade));
+      /*
+       * The shell is the shield made visible. It sits on the face the body is
+       * walking towards, brightens when light is turned away by it, and is
+       * dropped entirely once a boss enters its exposed phase, so the change
+       * is legible without reading a number.
+       */
+      if (e.shield > 0) {
+        var shieldCol = deflected ? 0xbfe4ff : (flash ? 0xffffff : 0x8a72ff);
+        var shieldMix = 0.09 + 0.07 * fade + (deflected ? 0.4 : 0);
+        var face = R.grid.DC[e.face] !== undefined ? e.face : R.S;
+        shieldPose.position.set(
+          e.x + R.grid.DC[face] * rad * 0.62,
+          y,
+          e.z + R.grid.DR[face] * rad * 0.62
+        );
+        shieldPose.scale.set(rad, rad, rad);
+        shieldPose.quaternion.set(0, 0, 0, 1);
+        shell.pushObject(shieldPose, R.util.mixColor(0x000000, shieldCol, shieldMix));
       }
 
       if (e.boss) {
@@ -3751,7 +3910,7 @@ body.wide #sideNote { display: block; }
             rd.burst(e.x, e.z, 0xffffff, 10, { speed: 2.2, size: 0.16, ttl: 0.7 });
             rd.shake(9, 0.32);
             rd.hitStop = 0.06;
-          } else if (e.enemy === 'brute') {
+          } else if (e.enemy === 'bulwark') {
             rd.burst(e.x, e.z, col, 10, { speed: 2.6, size: 0.19, ttl: 0.65 });
             rd.shake(4, 0.13);
           } else {
@@ -4114,7 +4273,7 @@ body.wide #sideNote { display: block; }
     }
     var next = s.wave + 1;
     return 'NEXT ' + pips(R.enemies.composition(next)) +
-      '&middot; in <span class="em">' + Math.max(0, Math.ceil(s.countdown)) + 's</span>';
+      '&middot; <span class="em">' + R.enemies.threatNote(next) + '</span>';
   }
 
   /* ---------- HUD ---------- */
@@ -4126,15 +4285,17 @@ body.wide #sideNote { display: block; }
     setText(el.waveVal, String(s.wave));
     setText(el.waveSub, s.endless ? '' : '/' + B.WAVES.length);
     /*
-     * Two readings, not one: PWR is the light actually landing on enemies
-     * (damage per second) and COV is how much of the road is lit. A wide but
-     * weak network scores well on COV and badly on PWR, which is the point.
+     * Coverage is how much of the road is lit. It is deliberately a secondary
+     * reading: it says how far the network reaches, not how much damage it
+     * does, and the two come apart whenever a formation shields itself. The
+     * damage figure behind that distinction is development telemetry, not
+     * something to put in front of the player.
      */
-    var pwr = Math.round(s.beam.pressure);
-    if (pwr > lastPwr) ui.pulseLight();
-    lastPwr = pwr;
-    setText(el.pwrVal, String(pwr));
-    setText(el.covVal, 'COV ' + s.beam.litRoadCount);
+    var cov = s.beam.litRoadCount;
+    if (cov > lastCov) ui.pulseLight();
+    lastCov = cov;
+    setText(el.covVal, String(cov));
+    setText(el.covSub, '/' + s.roadCells);
 
     var html = stripHtml(s);
     if (cache.strip !== html) {
@@ -4146,7 +4307,7 @@ body.wide #sideNote { display: block; }
   /* ---------- events ---------- */
 
   var goldFloaterAt = 0;
-  var lastPwr = 0;
+  var lastCov = 0;
 
   ui.handleEvents = function (s) {
     for (var i = 0; i < s.events.length; i++) {
@@ -4199,11 +4360,11 @@ body.wide #sideNote { display: block; }
           ui.banner(s.endless ? 'ENDLESS ' + e.wave : 'WAVE ' + e.wave, null, 1.5);
           break;
         case 'runstart':
-          lastPwr = 0;
+          lastCov = 0;
           ui.hint(s, 'start', 7);
           break;
         case 'spawn':
-          if (e.enemy === 'brute' || e.enemy === 'bruteking') ui.hint(s, 'brute', 6);
+          if (e.enemy === 'bulwark' || e.enemy === 'bruteking') ui.hint(s, 'bulwark', 6);
           if (e.enemy === 'swarmling') ui.hint(s, 'swarm', 6);
           break;
         case 'endless':
@@ -4294,8 +4455,8 @@ body.wide #sideNote { display: block; }
    * actually needs to solve, rather than the most numerous leaker.
    */
   var DEFEAT_TIPS = {
-    brute: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
-    bruteking: 'Brutes soak up most of the light, and everything walking behind one is shielded. Meet them head on, or split the beam so a second line reaches the rest.',
+    bulwark: 'A Bulwark carries its shield on the face it walks towards, so light meeting it head on mostly bounces off. Reach its flank or its back with a second line, or bring a return pass the other way.',
+    bruteking: 'A Brute King shields its front and soaks up the rest, so everything walking behind it is in shadow. Light it from another direction.',
     umbra: 'Umbra absorbs almost everything. Upgrade the core and light the long segments so it is burning for as long as possible.',
     swarmling: 'Swarms drain a beam fast: each one takes a bite before the light reaches the next. Split the light, or add a Lamp as a second source.',
     runner: 'Runners cross a single lit cell in half a second. Light a whole road segment lengthwise so they stay in the light.',
@@ -4317,17 +4478,33 @@ body.wide #sideNote { display: block; }
     return node('p', 'statline', label + ' <b>' + value + '</b>');
   }
 
+  /*
+   * A run can end two ways, and the screen has to say which. Surviving the
+   * boss is not a win, so a breach gets its own heading and its own reason
+   * rather than being reported as a core that ran out of health.
+   */
   function buildDefeat(wrap) {
     var s = R.state;
-    var h = node('h2', null, 'THE CORE FELL');
+    var breach = s.bossBreached;
+    var name = breach === 'umbra' ? 'UMBRA' : 'THE BOSS';
+    var h = node('h2', null, breach ? name + ' REACHED THE CORE' : 'THE CORE FELL');
     h.style.color = '#ff5d6c';
     wrap.appendChild(h);
+    if (breach) {
+      wrap.appendChild(node('p', 'reason',
+        'It had to be destroyed on the road. The core was still standing at ' +
+        Math.max(0, s.coreHp) + ' of ' + B.CORE_HP + ' HP, and that is not enough.'));
+    }
     wrap.appendChild(statLine('Reached wave', s.wave + ' of ' + B.WAVES.length));
     wrap.appendChild(statLine('Score', s.score));
     if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
-    wrap.appendChild(node('div', 'tip', defeatTip(s)));
+    wrap.appendChild(node('div', 'tip', breach ? BREACH_TIP : defeatTip(s)));
     wrap.appendChild(button('bigbtn', 'TRY AGAIN', function () { R.restartRun(); }));
   }
+
+  var BREACH_TIP = 'Umbra advances behind its shield, then drops it about halfway down the road. ' +
+    'Light that meets the shield head on is mostly turned away, so reach its flank or its back, ' +
+    'or add a return pass. Once the shield is down, everything you have built counts.';
 
   function buildVictory(wrap) {
     var s = R.state;
@@ -4379,8 +4556,7 @@ body.wide #sideNote { display: block; }
       else R.pause();
     });
     el.btnNext.addEventListener('click', function () {
-      var s = R.state;
-      if (s.phase === 'building') R.callWaveEarly(s);
+      R.startWave(R.state);
     });
     el.btnCore.addEventListener('click', function () {
       R.pieces.upgradeCore(R.state);
@@ -4499,11 +4675,13 @@ body.wide #sideNote { display: block; }
         : cost + '<span class="c">&#9670;</span>';
       el.btnCore.classList.toggle('dim', cost === null || s.gold < cost);
     }
-    var bonus = R.earlyCallBonus(s);
-    var nextStamp = s.phase + '|' + bonus;
+    var canStart = R.canStartWave(s);
+    var nextStamp = s.phase + '|' + s.wave;
     if (cache.next !== nextStamp) {
       cache.next = nextStamp;
-      el.btnNext.querySelector('.a2').innerHTML = '&#9654; +' + bonus + '<span class="c">&#9670;</span>';
+      el.btnNext.querySelector('.a1').textContent = canStart ? 'START WAVE ' + (s.wave + 1) : 'WAVE ' + s.wave;
+      el.btnNext.querySelector('.a2').innerHTML = canStart ? '&#9654;' : 'RUNNING';
+      el.btnNext.classList.toggle('dim', !canStart);
     }
   }
 
@@ -4622,7 +4800,7 @@ body.wide #sideNote { display: block; }
     start: 'Tap a tile on the beam to bend it along the road.',
     placed: 'Tap a placed piece to flip, move or sell it.',
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
-    brute: 'Brutes soak up the light. Anything walking behind one is shielded.',
+    bulwark: 'A Bulwark shields the face it walks towards. Hit its flank or its back.',
     swarm: 'Swarms drain a beam fast. Split it, or add a second source.',
     splitter: 'SPLITTER unlocked: passes and bends at the same time, half the power each way.',
     reflector: 'REFLECTOR unlocked: sends the light back down the same chain at 60%.',
@@ -4790,8 +4968,8 @@ body.wide #sideNote { display: block; }
     el.waveLbl = key(el.statWave.querySelector('.lbl'), 'waveLbl');
     el.waveVal = key(el.statWave.querySelector('.val'), 'waveVal');
     el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
-    el.pwrVal = key(el.statLight.querySelector('.val'), 'pwrVal');
-    el.covVal = key(el.statLight.querySelector('.sub'), 'covVal');
+    el.covVal = key(el.statLight.querySelector('.val'), 'covVal');
+    el.covSub = key(el.statLight.querySelector('.sub'), 'covSub');
     el.strip = byId('strip');
     el.stripText = key(byId('stripText'), 'strip');
     el.overlayRoot = byId('overlayRoot');
@@ -4839,7 +5017,7 @@ body.wide #sideNote { display: block; }
     cache = {};
     stripNotice = '';
     stripNoticeUntil = 0;
-    lastPwr = 0;
+    lastCov = 0;
     vignetteLevel = 0;
     if (vignette) vignette.style.opacity = '0';
     ui.clearBanners();
@@ -5203,7 +5381,6 @@ body.wide #sideNote { display: block; }
     var s = R.state;
     if (s.phase !== 'title') return;
     s.phase = 'building';
-    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
     R.emit(s, 'runstart', {});
   };
 
@@ -5211,7 +5388,6 @@ body.wide #sideNote { display: block; }
   R.restartRun = function (seed) {
     var s = R.newRun(seed);
     s.phase = 'building';
-    s.countdown = R.BALANCE.FIRST_COUNTDOWN;
     R.emit(s, 'runstart', {});
     return s;
   };
@@ -5222,7 +5398,6 @@ body.wide #sideNote { display: block; }
     if (s.phase !== 'won') return;
     s.endless = true;
     s.phase = 'building';
-    s.countdown = R.BALANCE.COUNTDOWN;
     R.applyUnlocks(s, s.wave + 1);
     R.emit(s, 'endless', { wave: s.wave + 1 });
   };
@@ -5246,30 +5421,24 @@ body.wide #sideNote { display: block; }
     }
   };
 
+  /*
+   * Planning does not run on a clock. Combat is paused between encounters
+   * until the player asks for the next one, so reading the formation and
+   * rearranging the network are never charged against a timer.
+   */
+  R.canStartWave = function (s) {
+    return s.phase === 'building';
+  };
+
   R.startWave = function (s) {
+    if (s.phase !== 'building') return;
     s.wave++;
     s.spawnQueue = R.enemies.buildQueue(s.wave);
     s.spawnCursor = 0;
     s.waveEnemiesTotal = s.spawnQueue.length;
     s.waveTime = 0;
-    s.countdown = 0;
     s.phase = 'wave';
     R.emit(s, 'wavestart', { wave: s.wave, count: s.waveEnemiesTotal });
-  };
-
-  /* Gold on offer for skipping the rest of the countdown. */
-  R.earlyCallBonus = function (s) {
-    if (s.phase !== 'building') return 0;
-    return Math.ceil(Math.max(0, s.countdown) * R.BALANCE.EARLY_CALL_RATE);
-  };
-
-  R.callWaveEarly = function (s) {
-    if (s.phase !== 'building') return;
-    var bonus = R.earlyCallBonus(s);
-    s.gold += bonus;
-    s.goldEarned += bonus;
-    R.startWave(s);
-    R.emit(s, 'earlycall', { bonus: bonus });
   };
 
   R.finishWave = function (s) {
@@ -5283,7 +5452,6 @@ body.wide #sideNote { display: block; }
       return;
     }
     s.phase = 'building';
-    s.countdown = R.BALANCE.COUNTDOWN;
     R.applyUnlocks(s, s.wave + 1);
   };
 
@@ -5291,16 +5459,12 @@ body.wide #sideNote { display: block; }
 
   /*
    * One fixed step, in the order the systems depend on each other:
-   * countdown, spawning, movement, light and damage, deaths and leaks,
-   * then the phase transitions those results imply.
+   * spawning, movement, light and damage, deaths and leaks, then the phase
+   * transitions those results imply. Planning has no clock of its own, so a
+   * step during planning only advances time and refreshes the beam.
    */
   R.simStep = function (s, dt) {
     s.time += dt;
-
-    if (s.phase === 'building') {
-      s.countdown -= dt;
-      if (s.countdown <= 0) R.startWave(s);
-    }
 
     if (s.phase === 'wave') {
       s.waveTime += dt;
@@ -5518,6 +5682,22 @@ body.wide #sideNote { display: block; }
         return R.state.phase;
       },
 
+      /*
+       * Planning waits for the player, so a scripted run has to ask for each
+       * encounter the same way a tap does.
+       */
+      startWave: function () {
+        R.startWave(R.state);
+        return R.state.phase;
+      },
+
+      /* Start the next encounter and run it to its end. */
+      playWave: function (maxSeconds) {
+        var s = R.state;
+        R.startWave(s);
+        return api().stepUntil('s.phase !== "wave"', maxSeconds || 260);
+      },
+
       /* Speed 0 stops the frame loop from stepping, so step() owns the clock. */
       freeze: function (on) {
         R.state.speed = on === false ? 1 : 0;
@@ -5616,7 +5796,7 @@ body.wide #sideNote { display: block; }
           wave: s.wave,
           wavesCleared: s.wavesCleared,
           endless: s.endless,
-          countdown: Math.round(s.countdown * 100) / 100,
+          bossBreached: s.bossBreached,
           time: Math.round(s.time * 100) / 100,
           gold: s.gold,
           goldEarned: s.goldEarned,

@@ -304,7 +304,7 @@
         case 'undo': audio.play('flip'); audio.play('gold'); break;
         case 'denied': audio.play('deny'); break;
         case 'kill':
-          audio.play(e.boss ? 'killBig' : (e.enemy === 'brute' ? 'killBig' : (e.enemy === 'swarmling' ? 'killSmall' : 'kill')));
+          audio.play(e.boss ? 'killBig' : (e.enemy === 'bulwark' ? 'killBig' : (e.enemy === 'swarmling' ? 'killSmall' : 'kill')));
           audio.play('gold');
           break;
         case 'leak': audio.play('leak'); break;

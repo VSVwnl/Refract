@@ -616,6 +616,16 @@ body.wide #sideNote { display: block; }
 .statline { font-size: 14px; color: var(--ink); letter-spacing: 0.04em; }
 .statline b { color: var(--gold); }
 
+/* The one-line reason a run ended, above the advice. */
+.reason {
+  max-width: 330px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #ffb8c0;
+  text-align: center;
+}
+
 .tip {
   max-width: 330px;
   font-size: 13px;

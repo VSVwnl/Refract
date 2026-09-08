@@ -59,7 +59,6 @@
       pausedFrom: null,
       endless: false,
       wave: 0,
-      countdown: B.FIRST_COUNTDOWN,
       waveTime: 0,
       time: 0,
       speed: 1,
@@ -86,8 +85,8 @@
       waveEnemiesLeft: 0,
       /* The beam result object owns its own pooled segment records. */
       beam: R.beam.makeResult(),
-      leaksBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
-      damageBy: { mote: 0, runner: 0, swarmling: 0, brute: 0, bruteking: 0, umbra: 0 },
+      leaksBy: { mote: 0, runner: 0, swarmling: 0, bulwark: 0, bruteking: 0, umbra: 0 },
+      damageBy: { mote: 0, runner: 0, swarmling: 0, bulwark: 0, bruteking: 0, umbra: 0 },
       ui: {
         selectedType: 'mirror',
         selectedPieceId: null,
