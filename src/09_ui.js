@@ -346,7 +346,7 @@
     var rows = node('div', 'rows');
     rows.appendChild(node('div', 'row', '<b>&#9670;</b> Your core fires one beam of light. Shadows walking the road burn in it.'));
     rows.appendChild(node('div', 'row', '<b>&#9655;</b> Tap a tile to place a mirror and bend the beam along the road.'));
-    rows.appendChild(node('div', 'row', '<b>&#8635;</b> Tap a placed piece to flip, move or sell it. Survive twelve waves.'));
+    rows.appendChild(node('div', 'row', '<b>&#8635;</b> Tap a placed piece to rotate, move or sell it. Survive eight encounters.'));
     wrap.appendChild(rows);
     if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
     wrap.appendChild(button('bigbtn', 'PLAY', function () { R.startRun(); }));
@@ -644,7 +644,7 @@
     actionBar = node('div', null);
     actionBar.id = 'actionBar';
     actionBar.style.display = 'none';
-    actionBar.appendChild(button('', 'FLIP', function () {
+    actionBar.appendChild(button('', 'ROTATE', function () {
       var s = R.state;
       var p = R.pieces.selected(s);
       if (p) R.pieces.flip(s, p.c, p.r);
@@ -668,14 +668,14 @@
       cache.bar = null;
       return;
     }
-    var flip = actionBar.children[0];
+    var rotate = actionBar.children[0];
     var move = actionBar.children[1];
     var sell = actionBar.children[2];
     var stamp = p.id + '|' + p.c + '|' + p.r + '|' + s.ui.moveMode + '|' + R.pieces.refundFor(s, p) + '|' + R.render.boardW;
     if (cache.bar === stamp) return;
     cache.bar = stamp;
 
-    flip.style.display = p.type === 'reflector' ? 'none' : '';
+    rotate.style.display = p.type === 'reflector' ? 'none' : '';
     move.textContent = s.ui.moveMode ? 'TAP TILE' : 'MOVE';
     move.classList.toggle('danger', false);
     sell.innerHTML = 'SELL ' + R.pieces.refundFor(s, p);
@@ -782,7 +782,7 @@
 
   var HINTS = {
     start: 'Tap the marked tile to bend the beam along the road.',
-    placed: 'Tap a placed piece to flip, move or sell it.',
+    placed: 'Tap a placed piece to rotate, move or sell it.',
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
     bulwark: 'A Bulwark shields the face it walks towards. Hit its flank or its back.',
     swarm: 'Swarms drain a beam fast. Split it, or add a second source.',

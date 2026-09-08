@@ -597,8 +597,8 @@ module.exports = function (S) {
       return { shown: b.style.display !== 'none', text: b.textContent.replace(/\s+/g, ' ').trim() };
     });
     ctx.check(bar.shown, 'action bar appears on a selected piece');
-    ctx.check(bar.text.indexOf('FLIP') >= 0 && bar.text.indexOf('MOVE') >= 0 && bar.text.indexOf('SELL') >= 0,
-      'action bar has FLIP, MOVE and SELL (' + bar.text + ')');
+    ctx.check(bar.text.indexOf('ROTATE') >= 0 && bar.text.indexOf('MOVE') >= 0 && bar.text.indexOf('SELL') >= 0,
+      'action bar has ROTATE, MOVE and SELL (' + bar.text + ')');
     const barBox = await st(function () {
       const b = document.getElementById('actionBar').getBoundingClientRect();
       return { l: Math.round(b.left), r: Math.round(b.right), t: Math.round(b.top), h: Math.round(b.height) };
@@ -610,14 +610,14 @@ module.exports = function (S) {
 
     const dirBefore = (await pieceAt(0, 6)).dir;
     await ctx.tap('#actionBar button:nth-child(1)');
-    ctx.eq((await pieceAt(0, 6)).dir, (dirBefore + 1) % 4, 'FLIP turns the lamp a quarter turn');
+    ctx.eq((await pieceAt(0, 6)).dir, (dirBefore + 1) % 4, 'ROTATE turns the lamp a quarter turn');
 
     await ctx.tapCell(7, 8);
     bar = await st(function () {
       const b = document.getElementById('actionBar');
       return b.children[0].style.display;
     });
-    ctx.eq(bar, 'none', 'a reflector has no FLIP action');
+    ctx.eq(bar, 'none', 'a reflector has no ROTATE action');
 
     /* --- MOVE then tap --- */
     await ctx.tapCell(0, 6);
@@ -1244,7 +1244,7 @@ module.exports = function (S) {
     await ctx.tapCell(7, 3);
     await ctx.page.waitForTimeout(80);
     h = await hintText();
-    ctx.check(h && h.indexOf('flip') >= 0, 'placing a piece teaches the next verb: ' + h);
+    ctx.check(h && h.indexOf('rotate') >= 0, 'placing a piece teaches the next verb: ' + h);
 
     /* a hint never sits under the action bar */
     await ctx.tapCell(7, 3);
