@@ -19,7 +19,7 @@ Design (locked in the design session before any code existed; see `MASTER_SPEC.m
 - Pieces: Mirror (90°), Splitter (pass + reflect at 50% each), Reflector (return at 60%), Lamp (second source at 50% of core power). Core levels 1–6.
 - Controls: tap palette → tap tile to place; tap piece → flip/move/sell; drag to move; undo within 3 s; portrait, touch-first, one active pointer.
 - Session: eight encounters, about 5 to 6 minutes at normal speed; win/lose/reset; endless after victory; score with best score.
-- Endless is a separate rule set and never touches the campaign: named encounters that always use both gates, a cap on body health so nothing becomes a sponge, temporary cuts through the road that are announced during planning and restored afterwards, a boss breach that hurts rather than ending the run, and a limit of five pieces the core will power at once.
+- Endless is the original four rotating wave shapes with their original counts, spacing and scaling. The single change from the campaign's rules is that every endless group is halved between the two gates, so a network covering one road does not hold. Session 7's larger endless rebuild was reverted at the owner's request; see session 8.
 - Planning is untimed. Combat is paused between encounters until the player taps START WAVE; there is no countdown and no reward for starting early. Moving, turning and selling pieces during planning is free and refunds the price paid; mid-combat a moved piece goes dark for 0.3 s and a sale returns the sell rate.
 - Enemies: Mote, Runner, Swarmling, Bulwark, Brute King, Umbra. Absorption (how much light a body removes from what continues past it) and shielding (how much damage is deflected when light meets the face it walks towards) are separate constants.
 - Umbra advances shielded, then drops the shield at 45 percent of the road for the rest of the walk. About 56 s on the road.
@@ -1268,4 +1268,42 @@ A fingerprint of the campaign was taken before any of this work and compared aft
 
 - The cuts' rerouting payoff, above.
 - No unfamiliar player has tried any of this.
+
+---
+
+## Session 8 - Endless reverted to its earlier behaviour, keeping both gates
+
+**Owner's call:** the previous endless felt better than the session 7 rebuild, but both entrances should carry traffic.
+
+**What was reverted.** `src/` and `tools/qa-scenarios.js` were checked out from the commit before session 7, taking out the named endless encounters, the health cap, the shape scaling for shields, swarms and spacing, the faster speed ramp, the temporary road cuts, the five-piece powered limit, and the change that stopped a boss breach ending an endless run. Endless is again the four rotating shapes with `BASE_COUNT + wave` bodies, a Brute King every fifth wave, unbounded health scaling and the original 0.02/wave speed ramp capped at 1.5.
+
+Two things from that work were kept deliberately, because neither is about endless:
+
+- the hint stepping up out of the way of the undo chip, which was a real overlap at 360x640;
+- the campaign fingerprint tool, which is what proves the campaign is untouched.
+
+**What was kept from the goal.** `en.endlessGroups` still builds exactly the same groups it always did; a new `splitAcrossGates` then halves each one between the two entrances. A group of one - the Brute King - cannot be halved, so it changes gate from one appearance to the next instead. Types, counts and spacing are unchanged in aggregate: wave 9 is still 23 bodies of 17 motes and 6 runners, as it was before any of this.
+
+**Measured effect.** With the same strong static layout at core 6:
+
+| | reached |
+| --- | --- |
+| before, one gate | wave 15 |
+| after, both gates | wave 13 |
+
+And the answer to it is coverage, not luck. Same core level, three arrangements:
+
+| build | lit road | reached |
+| --- | --- | --- |
+| four mirrors stacked on the column 7 trunk | 7 | wave 10 |
+| a chain covering both middle sweeps | 13 | wave 12 |
+| a wide network of mirrors and lamps | 30 | wave 16 |
+
+So endless is a little harder than it was, and the extra difficulty is answerable by covering more of the board rather than by knowing a trick.
+
+**Campaign unchanged, checked again.** The same fingerprint as session 7 - map and kind array, road cells, both roads cell by cell, every tuning constant, all eight wave queues with types, timings and gates, threat notes, multipliers, and a full scripted eight-wave run - is byte-identical to the one taken before any endless work began.
+
+**Evidence.** 26 Node tests, 24 browser scenarios and the compliance check all pass. The session 7 `endless` scenario was removed with the rest of that work and replaced by `endlessgates` (34 checks): the campaign wave table and speeds unchanged, every endless wave arriving through both gates with neither carrying more than two bodies' worth of the difference, the four shapes still rotating with their swarm, shield and Brute King waves intact, and the three-way build comparison above asserted rather than merely logged.
+
+**A note found on the way.** Comparing the tree against the pre-session-7 commit showed `src/05_beam.js` as 892 changed lines; the real change was two lines, and the rest was line endings. The scripted edits used through these sessions rewrote some files from LF to CRLF. It makes no difference to the build, which concatenates whatever it reads, and `check.js` passes either way, but it makes diffs noisier than they should be.
 

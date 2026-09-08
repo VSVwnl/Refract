@@ -780,12 +780,7 @@
       var z = R.grid.worldZ(p.r);
       var sc = pieceScale(state, p);
       var dragging = state.ui.drag && state.ui.drag.pieceId === p.id;
-      /*
-       * A piece re-forming or being dragged is half lit; one the core is not
-       * powering is darker still, so an idle board reads as a choice made
-       * rather than as pieces that stopped working.
-       */
-      var dim = p.idle ? 0.25 : ((p.inactiveUntil > state.time || dragging) ? 0.45 : 1);
+      var dim = (p.inactiveUntil > state.time || dragging) ? 0.45 : 1;
       var diag = p.orient === 0 ? Math.PI / 4 : -Math.PI / 4;
       var flip = flipTimes[p.id];
       if (flip) {

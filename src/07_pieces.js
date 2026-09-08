@@ -30,79 +30,8 @@
   };
 
   /*
-   * How many pieces the core can power at once. The campaign has no limit;
-   * endless has one, because a board with a piece on every useful cell
-   * decides every encounter before it starts.
-   */
-  R.pieces.limit = function (s) {
-    return s.endless ? B.ENDLESS.ACTIVE_PIECES : Infinity;
-  };
-
-  R.pieces.activeCount = function (s) {
-    var n = 0;
-    var it = s.pieces.values();
-    var e = it.next();
-    while (!e.done) {
-      if (!e.value.idle) n++;
-      e = it.next();
-    }
-    return n;
-  };
-
-  R.pieces.atLimit = function (s) {
-    return R.pieces.activeCount(s) >= R.pieces.limit(s);
-  };
-
-  /*
-   * Idle a piece, or wake it. Only during planning, and never past the limit.
-   * An idle piece keeps its place and its price; it is simply transparent to
-   * light until the player powers it again.
-   */
-  R.pieces.setIdle = function (s, piece, idle) {
-    if (!piece || !R.pieces.isPlanning(s)) return false;
-    if (!idle && R.pieces.atLimit(s)) {
-      R.emit(s, 'denied', { reason: 'limit', c: piece.c, r: piece.r, piece: piece.type });
-      return false;
-    }
-    if (piece.idle === !!idle) return true;
-    piece.idle = !!idle;
-    R.beam.recompute(s);
-    R.emit(s, 'idle', { id: piece.id, piece: piece.type, c: piece.c, r: piece.r, idle: piece.idle });
-    return true;
-  };
-
-  /*
-   * Entering endless can leave a board holding more than the core can power.
-   * Nothing is sold: the newest pieces go idle until the board is inside the
-   * limit, and the player can swap which ones are awake during planning.
-   */
-  R.pieces.applyLimit = function (s) {
-    var limit = R.pieces.limit(s);
-    if (!isFinite(limit)) return 0;
-    var awake = [];
-    var it = s.pieces.values();
-    var e = it.next();
-    while (!e.done) {
-      if (!e.value.idle) awake.push(e.value);
-      e = it.next();
-    }
-    if (awake.length <= limit) return 0;
-    awake.sort(function (a, b) { return b.id - a.id; });
-    var idled = 0;
-    for (var i = 0; i < awake.length - limit; i++) {
-      awake[i].idle = true;
-      idled++;
-    }
-    if (idled) {
-      R.beam.recompute(s);
-      R.emit(s, 'limited', { idled: idled, limit: limit });
-    }
-    return idled;
-  };
-
-  /*
    * Why a placement would be refused, or null when it is allowed.
-   * 'locked' | 'gold' | 'occupied' | 'terrain' | 'limit'
+   * 'locked' | 'gold' | 'occupied' | 'terrain'
    */
   R.pieces.placementProblem = function (s, type, c, r) {
     if (!R.pieces.isUnlocked(s, type)) return 'locked';
@@ -111,7 +40,6 @@
     if (s.grid.kind[i] !== R.EMPTY) return 'terrain';
     if (s.pieces.has(i)) return 'occupied';
     if (s.gold < R.pieces.cost(s, type)) return 'gold';
-    if (R.pieces.atLimit(s)) return 'limit';
     return null;
   };
 
@@ -154,7 +82,6 @@
       orient: type === 'lamp' ? 0 : (chosen % 2),
       dir: type === 'lamp' ? (chosen % 4) : R.N,
       cost: cost,
-      idle: false,
       placedAt: s.time,
       inactiveUntil: -1
     };

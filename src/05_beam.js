@@ -209,7 +209,7 @@
       }
 
       var piece = pieces.get(i);
-      if (piece && (piece.idle || piece.inactiveUntil > nowTime)) piece = null;
+      if (piece && piece.inactiveUntil > nowTime) piece = null;
 
       if (piece) {
         var px = R.grid.worldX(c);
@@ -306,7 +306,7 @@
     var entry = it.next();
     while (!entry.done) {
       var p = entry.value;
-      if (p.type === 'lamp' && !p.idle && p.inactiveUntil <= nowTime) {
+      if (p.type === 'lamp' && p.inactiveUntil <= nowTime) {
         sourceId++;
         visitGen++;
         currentSourcePower = lampPower;

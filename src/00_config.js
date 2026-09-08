@@ -153,58 +153,7 @@
         split: 0.6
       }
     },
-    /*
-     * Endless. The campaign above is untouched by any of this.
-     *
-     * Bodies stop getting tougher at HP_MULT_CAP, so nothing ever becomes a
-     * thing that simply takes longer to kill. What escalates instead is the
-     * shape of each encounter: which gates it uses, how the shields face, and
-     * how tightly it packs. Encounters are named so the strip can say what is
-     * coming and what it wants, and they cycle in a fixed order so a player
-     * can learn them rather than guess.
-     */
-    ENDLESS: {
-      BASE_COUNT: 10,
-      COUNT_PER_WAVE: 2,
-      /* Shields per wall, swarm size and spacing, all growing with the wave. */
-      SHIELD_BASE: 3,
-      SHIELD_EVERY: 3,
-      SHIELD_CAP: 6,
-      SWARM_BASE: 12,
-      SWARM_EVERY: 2,
-      SWARM_CAP: 40,
-      SWARM_GAP: 0.16,
-      GAP_BASE: 0.7,
-      GAP_PER_WAVE: 0.02,
-      GAP_FLOOR: 0.22,
-      SPEED_PER_WAVE: 0.09,
-      SPEED_CAP: 2.2,
-      HP_MULT_CAP: 2.2,
-      KING_EVERY: 5,
-      /*
-       * How many pieces the core can power at once in endless. Measured: a
-       * seven-piece board lights 30 of 32 road cells, which decides every
-       * encounter before it starts and leaves the cuts nothing to bypass.
-       * Nothing is ever destroyed or taken away by this - pieces over the
-       * limit sit idle on the board and can be swapped in during planning.
-       */
-      ACTIVE_PIECES: 5,
-      /*
-       * Cuts: how much of an encounter walks an open one, how often one
-       * opens, how many encounters it stays for, and the wave they start.
-       */
-      CUT_SHARE: 0.6,
-      CUT_EVERY: 3,
-      CUT_WAVES: 2,
-      CUT_FROM_WAVE: 11,
-      ENCOUNTERS: [
-        { key: 'split', name: 'SPLIT MARCH', note: 'both gates at once' },
-        { key: 'wall', name: 'SHIELD WALL', note: 'a line of shields, facing you' },
-        { key: 'tide', name: 'SWARM TIDE', note: 'thick enough to drink the beam' },
-        { key: 'break', name: 'RUNNER BREAK', note: 'fast, and barely in the light' },
-        { key: 'vanguard', name: 'VANGUARD', note: 'a Brute King, escorted' }
-      ]
-    }
+    ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
   };
 
   R.PIECE_TYPES = ['mirror', 'splitter', 'reflector', 'lamp'];
@@ -248,24 +197,6 @@
       [6, 9], [6, 10],
       [7, 10],
       [7, 11]
-    ],
-    /*
-     * Temporary cuts through the road, used only in endless. Each one runs
-     * from one trunk index to another through the listed cells, skipping
-     * everything between. A cut is only ever offered when its cells are empty,
-     * so it never disturbs a piece that has been paid for, and it is chosen
-     * and shown during planning, never while a wave is running.
-     */
-    cuts: [
-      /*
-       * Each cut leaves the road along a row the sweeps do not use, so a
-       * network built for the sweeps does not cover it. The deep cut skips a
-       * whole sweep and is the one that most demands an answer.
-       */
-      { name: 'the deep cut', from: 16, to: 23,
-        cells: [[1, 9], [1, 10], [2, 10], [3, 10], [4, 10], [5, 10]] },
-      { name: 'the long cut', from: 2, to: 14, cells: [[1, 5]] },
-      { name: 'the low cut', from: 11, to: 19, cells: [[4, 7]] }
     ],
     /*
      * Each mouth is the cells it adds, plus the index in the trunk it joins

@@ -119,8 +119,6 @@
     s.endless = true;
     s.phase = 'building';
     R.applyUnlocks(s, s.wave + 1);
-    R.pieces.applyLimit(s);
-    R.refreshCut(s);
     R.emit(s, 'endless', { wave: s.wave + 1 });
   };
 
@@ -223,13 +221,13 @@
      * already named it during planning, so nothing ever walks out of a portal
      * the player has not been shown.
      */
-    var uses = R.enemies.routesFor(s.wave, s.cut ? s.cut.route : -1);
+    var uses = R.enemies.routesFor(s.wave);
     var needed = uses.length ? uses[uses.length - 1] + 1 : 1;
     if (needed > s.routesOpen) {
       s.routesOpen = Math.min(needed, s.routes.length);
       R.emit(s, 'routeopen', { routes: s.routesOpen });
     }
-    s.spawnQueue = R.enemies.buildQueue(s.wave, s.cut ? s.cut.route : -1);
+    s.spawnQueue = R.enemies.buildQueue(s.wave);
     s.spawnCursor = 0;
     s.waveEnemiesTotal = s.spawnQueue.length;
     s.waveTime = 0;
@@ -249,7 +247,6 @@
     }
     s.phase = 'building';
     R.applyUnlocks(s, s.wave + 1);
-    R.refreshCut(s);
 
     /*
      * The run pauses on the choice rather than showing it over live combat,
