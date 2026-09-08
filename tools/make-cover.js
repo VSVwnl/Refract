@@ -110,7 +110,7 @@ const html = `<!doctype html>
 `;
 
 const out = path.join(ROOT, 'dist', 'cover.png');
-const tmp = path.join(__dirname, 'cover.html');
+const tmp = path.join(require('os').tmpdir(), 'refract-cover.html');
 fs.writeFileSync(tmp, html, 'utf8');
 
 (async () => {

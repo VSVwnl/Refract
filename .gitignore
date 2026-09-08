@@ -4,3 +4,4 @@ dist/
 shots/
 *.log
 play/
+tools/cover.html
