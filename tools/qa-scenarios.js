@@ -3995,6 +3995,8 @@ module.exports = function (S) {
     ctx.eq(m.pieces, 1, 'the mirror goes down');
     ctx.check(m.lit > 1, 'and the beam is redirected along the road (' + m.lit + ' lit)');
     ctx.eq(m.step, 'rotate', 'the walkthrough moves to the turning step');
+    ctx.eq(await st(function () { return document.getElementById('undoChip').style.display; }), 'none',
+      'and the undo chip stays out of the way while it is running');
     ctx.eq(m.canStart, false, 'the wave still cannot be started');
     ctx.check((await bar()).indexOf('rotate') >= 0, 'the line teaches the next verb: ' + await bar());
     await ctx.snap('b-step-rotate');
@@ -4019,6 +4021,8 @@ module.exports = function (S) {
     ctx.check(await st(function () {
       return document.getElementById('btnNext').classList.contains('callout');
     }), 'and the button it wants is picked out');
+    ctx.eq(await st(function () { return document.getElementById('undoChip').style.display; }), 'none',
+      'the undo chip is still out of the way on the last step');
     await ctx.snap('c-step-start');
 
     /* --- starting the wave ends it, for this run and for good --- */

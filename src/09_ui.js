@@ -732,7 +732,12 @@
 
   function syncUndoChip(s) {
     var live = R.pieces.undoLive(s);
-    var show = !!live && !s.ui.drag;
+    /*
+     * Not during the walkthrough. It shares the foot of the board with the
+     * walkthrough bar, and undoing the mirror the walkthrough just asked for
+     * would leave the next step with nothing to point at.
+     */
+    var show = !!live && !s.ui.drag && !R.tutorialActive(s);
     if (cache.undo === show) return;
     cache.undo = show;
     undoChip.style.display = show ? 'block' : 'none';
@@ -816,7 +821,7 @@
      * steps up out of the way while the chip is on screen rather than either
      * of them being lost behind the other.
      */
-    var raised = show && (!!R.pieces.undoLive(s) || R.tutorialActive(s));
+    var raised = show && !!R.pieces.undoLive(s) && !R.tutorialActive(s);
     var stamp = show + '|' + raised;
     if (cache.hint === stamp) return;
     cache.hint = stamp;
