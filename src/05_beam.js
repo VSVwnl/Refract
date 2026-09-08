@@ -44,6 +44,8 @@
       lit: new Float32Array(CELLS),
       litRoadCount: 0,
       litRoadPower: 0,
+      /* Power actually landing on enemies, i.e. damage per second. */
+      pressure: 0,
       totalPower: 0,
       overflow: false,
       version: 0
@@ -159,6 +161,11 @@
         var ordered = orderAlong(list, dir);
         for (var k = 0; k < ordered.length; k++) {
           var e = ordered[k];
+          /*
+           * Pressure counts the power that reaches each enemy, so it is the
+           * same number whether this is a preview (dt 0) or a live step.
+           */
+          out.pressure += power;
           if (stepDt > 0) {
             e.damage += power * stepDt;
             e.hitAt = nowTime;
@@ -236,6 +243,7 @@
     out.segCount = 0;
     out.totalPower = 0;
     out.litRoadPower = 0;
+    out.pressure = 0;
     out.overflow = false;
     out.lit.fill(0);
 

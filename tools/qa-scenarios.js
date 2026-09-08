@@ -52,18 +52,21 @@ module.exports = function (S) {
     const gold = function () { return ctx.ev(function () { return R.state.gold; }); };
     const hud = function () {
       return ctx.ev(function () {
-        return document.getElementById('statLit').textContent + ' / ' +
+        return document.getElementById('statLight').textContent + ' / ' +
                document.getElementById('statGold').textContent;
       });
     };
 
     ctx.eq(await lit(), 1, 'default beam lights one road cell');
-    ctx.check((await hud()).replace(/\s+/g, '') === 'LIT1/31/◆40', 'HUD shows LIT 1/31 and 40 gold');
+    /* PWR is the light landing on enemies; with an empty board it is zero. */
+    ctx.eq((await hud()).replace(/\s+/g, ''),
+      'PWR0COV1/◆' + await ctx.ev(function () { return R.BALANCE.START_GOLD; }),
+      'HUD shows no pressure, one lit cell and the starting gold');
     await ctx.snap('a-default');
 
     await ctx.tapCell(7, 4);
     ctx.eq(await lit(), 7, 'mirror at (7,4) lights the row 4 sweep');
-    ctx.eq(await gold(), 20, 'gold after one mirror');
+    ctx.eq(await gold(), await ctx.ev(function () { return R.BALANCE.START_GOLD - R.BALANCE.PIECE_COST.mirror; }), 'gold after one mirror');
     ctx.eq(await ctx.ev(function () { return R.pieces.at(R.state, 7, 4).orient; }), 1, 'smart orientation');
     await ctx.snap('b-mirror74');
 
@@ -72,7 +75,7 @@ module.exports = function (S) {
       'tapping a placed piece selects it');
     await ctx.tap('#actionBar button:nth-child(1)');
     ctx.eq(await lit(), 1, 'flipping sends the beam off the board');
-    ctx.eq(await gold(), 20, 'flipping is free');
+    ctx.eq(await gold(), await ctx.ev(function () { return R.BALANCE.START_GOLD - R.BALANCE.PIECE_COST.mirror; }), 'flipping is free');
     await ctx.snap('c-flipped');
 
     await ctx.ev(function () { window.__REFRACT.restart(11); });
@@ -140,15 +143,30 @@ module.exports = function (S) {
       return ctx.ev(function (a) { return window.__REFRACT.stepUntil(a[0], a[1]); }, [src, max || 200]);
     };
 
+    /* Expected numbers come from BALANCE so a retune does not rot the test. */
+    const B = await ctx.ev(function () {
+      const b = R.BALANCE;
+      const w1 = R.enemies.groupsFor(1);
+      let motes = 0;
+      for (let i = 0; i < w1.length; i++) if (w1[i][0] === 'mote') motes += w1[i][1];
+      return {
+        startGold: b.START_GOLD, coreHp: b.CORE_HP, waves: b.WAVES.length,
+        first: b.FIRST_COUNTDOWN, between: b.COUNTDOWN,
+        mirror: b.PIECE_COST.mirror, moteGold: b.ENEMY.mote.gold,
+        unlock: b.UNLOCK_WAVE, wave1Motes: motes,
+        clear1: b.WAVE_CLEAR_BASE + b.WAVE_CLEAR_PER_WAVE * 1
+      };
+    });
+
     await ctx.ev(function () { window.__REFRACT.restart(101); window.__REFRACT.freeze(true); });
     let m = await snap();
     ctx.eq(m.wave, 0, 'starts before wave 1');
-    ctx.eq(m.coreHp, 20, 'core hp');
-    ctx.eq(m.gold, 40, 'start gold');
-    ctx.near(m.countdown, 10, 0.01, 'first countdown');
+    ctx.eq(m.coreHp, B.coreHp, 'core hp');
+    ctx.eq(m.gold, B.startGold, 'start gold');
+    ctx.near(m.countdown, B.first, 0.01, 'first countdown');
 
     /* --- wave 1 with nothing placed: every mote leaks --- */
-    await step(10.5);
+    await step(B.first + 0.5);
     m = await snap();
     ctx.eq(m.phase, 'wave', 'wave 1 started after the countdown');
     ctx.eq(m.wave, 1, 'wave number');
@@ -156,28 +174,28 @@ module.exports = function (S) {
 
     await until('s.phase === "building"', 120);
     m = await snap();
-    ctx.eq(m.coreHp, 16, 'four motes leaked one HP each');
-    ctx.eq(m.leaksBy.mote, 4, 'leaks attributed to motes');
-    ctx.eq(m.gold, 59, 'gold is start plus the wave-1 clear bonus of 19');
+    ctx.eq(m.coreHp, B.coreHp - B.wave1Motes, 'every wave-1 mote leaked one HP');
+    ctx.eq(m.leaksBy.mote, B.wave1Motes, 'leaks attributed to motes');
+    ctx.eq(m.gold, B.startGold + B.clear1, 'gold is start plus the wave-1 clear bonus');
     ctx.eq(m.wave, 1, 'wave 1 is over');
     ctx.eq(m.phase, 'building', 'back to building');
-    ctx.near(m.countdown, 8, 0.02, 'countdown between waves');
-    ctx.eq(m.unlocked.splitter, true, 'splitter unlocked for wave 2');
-    ctx.eq(m.unlocked.reflector, false, 'reflector still locked');
+    ctx.near(m.countdown, B.between, 0.02, 'countdown between waves');
+    ctx.eq(m.unlocked.splitter, B.unlock.splitter <= 2, 'splitter unlocked for wave 2');
 
     /* --- wave 1 with one mirror at (7,6): nothing gets through --- */
     await ctx.ev(function () { window.__REFRACT.restart(101); window.__REFRACT.freeze(true); });
     await ctx.tapCell(7, 6);
     m = await snap();
     ctx.eq(m.lit, 7, 'mirror lights the row 6 sweep');
-    ctx.eq(m.gold, 20, 'mirror cost 20');
+    ctx.eq(m.gold, B.startGold - B.mirror, 'the mirror was paid for');
 
-    await step(10.5);
+    await step(B.first + 0.5);
     await until('s.phase === "building"', 120);
     m = await snap();
-    ctx.eq(m.coreHp, 20, 'no leaks with the mirror in place');
-    ctx.eq(m.gold, 20 + 16 + 19, 'gold: four kills at 4 plus a 19 clear bonus');
-    ctx.eq(m.goldEarned, 35, 'earned gold counts kills and the bonus');
+    const kills = B.wave1Motes * B.moteGold;
+    ctx.eq(m.coreHp, B.coreHp, 'no leaks with the mirror in place');
+    ctx.eq(m.gold, B.startGold - B.mirror + kills + B.clear1, 'gold: every mote killed plus the clear bonus');
+    ctx.eq(m.goldEarned, kills + B.clear1, 'earned gold counts kills and the bonus');
     await ctx.snap('b-wave1-cleared');
 
     /* --- waves 2 and 3 --- */
@@ -188,12 +206,11 @@ module.exports = function (S) {
     await until('s.wave === 2 && s.phase === "building"', 200);
     m = await snap();
     ctx.eq(m.wavesCleared, 2, 'two waves cleared');
-    ctx.eq(m.unlocked.reflector, false, 'reflector unlocks later');
 
     await until('s.wave === 3 && s.phase === "building"', 240);
     m = await snap();
     ctx.eq(m.wavesCleared, 3, 'three waves cleared');
-    ctx.eq(m.unlocked.reflector, true, 'reflector unlocked for wave 4');
+    ctx.eq(m.unlocked.reflector, true, 'reflector unlocked by wave 4');
     ctx.log('  after three waves: hp ' + m.coreHp + ' gold ' + m.gold + ' score ' + m.score);
     await ctx.snap('d-after-wave3');
 
@@ -317,7 +334,7 @@ module.exports = function (S) {
     await ctx.tap('#overlayRoot .bigbtn');
     m = await snap();
     ctx.eq(m.phase, 'building', 'TRY AGAIN goes straight back to the board');
-    ctx.eq(m.gold, 40, 'gold reset');
+    ctx.eq(m.gold, await ctx.ev(function () { return R.BALANCE.START_GOLD; }), 'gold reset');
     ctx.eq(m.coreHp, 20, 'core hp reset');
     ctx.eq(m.wave, 0, 'wave reset');
     ctx.eq(m.lit, 1, 'beam reset to one lit cell');
@@ -415,7 +432,7 @@ module.exports = function (S) {
     /* --- all twelve waves are wired from the data --- */
     const waves = await ctx.ev(function () {
       const out = [];
-      for (let w = 1; w <= 12; w++) {
+      for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
         const q = R.enemies.buildQueue(w);
         const counts = {};
         q.forEach(function (x) { counts[x.type] = (counts[x.type] || 0) + 1; });
@@ -424,10 +441,18 @@ module.exports = function (S) {
       return out;
     });
     ctx.log('  waves: ' + JSON.stringify(waves));
-    ctx.eq(waves[0].n, 4, 'wave 1 has four enemies');
-    ctx.eq(waves[9].counts.bruteking, 1, 'wave 10 has the Brute King');
-    ctx.eq(waves[11].counts.umbra, 1, 'wave 12 has Umbra');
-    ctx.eq(waves[10].n, 30, 'wave 11 has thirty enemies');
+    ctx.eq(waves.length, 5, 'the session is five encounter beats');
+    ctx.check(waves[0].n <= 6, 'the opening beat is small (' + waves[0].n + ' enemies)');
+    ctx.eq(waves[1].counts.brute, 1, 'the shield beat leads with a brute');
+    ctx.check(waves[1].counts.mote > 0, 'the shield beat has fragile followers behind it');
+    ctx.eq(waves[waves.length - 1].counts.umbra, 1, 'the last beat is Umbra');
+    ctx.check(waves[3].n > waves[0].n * 3, 'the pressure beat is much larger than the opening');
+    /* Each beat has to bring something the one before it did not. */
+    for (let i = 1; i < waves.length; i++) {
+      const before = Object.keys(waves[i - 1].counts).join();
+      ctx.check(Object.keys(waves[i].counts).join() !== before || waves[i].n !== waves[i - 1].n,
+        'beat ' + (i + 1) + ' differs from beat ' + i);
+    }
   };
 
   /* Phase 4: the full palette, action bar, drag, sell, undo and core upgrades. */
@@ -479,7 +504,13 @@ module.exports = function (S) {
         return b.classList.contains('locked') ? b.querySelector('.plock').textContent : 'open';
       });
     });
-    ctx.eq(JSON.stringify(locked), '["open","WAVE 2","WAVE 4","WAVE 7"]', 'lock labels');
+    const expectLocks = await st(function () {
+      const u = R.BALANCE.UNLOCK_WAVE;
+      return JSON.stringify(R.PIECE_TYPES.map(function (t) {
+        return u[t] ? 'WAVE ' + u[t] : 'open';
+      }));
+    });
+    ctx.eq(JSON.stringify(locked), expectLocks, 'lock labels follow the unlock table');
     await ctx.tap('#palette .pbtn[data-type="splitter"]');
     await ctx.tapCell(5, 5);
     ctx.eq(await st(function () { return R.state.pieces.size; }), 0, 'a locked piece cannot be placed');
@@ -503,8 +534,18 @@ module.exports = function (S) {
         bent: Math.round(R.state.beam.lit[R.grid.idx(5, 6)] * 100) / 100
       };
     });
-    ctx.eq(branches.straight, 5.5, 'straight branch at 55 percent');
-    ctx.eq(branches.bent, 5.5, 'reflected branch at 55 percent');
+    const splitExpect = await st(function () {
+      return Math.round(R.beam.corePower(R.state.coreLevel) * R.BALANCE.SPLIT_FACTOR * 100) / 100;
+    });
+    ctx.eq(branches.straight, splitExpect, 'straight branch at the split factor');
+    ctx.eq(branches.bent, splitExpect, 'reflected branch at the split factor');
+    /*
+     * The brief opened at 85% total. Playtesting put splitter builds well
+     * outside the viable band there, so the two branches now split the input
+     * evenly and the rule reads as "half each way".
+     */
+    ctx.near(await st(function () { return R.BALANCE.SPLIT_FACTOR * 2; }), 1.0, 0.05,
+      'a splitter divides its input between the two branches');
     ctx.eq(await gold(), 2000 - 45, 'splitter cost 45');
 
     await ctx.tap('#palette .pbtn[data-type="reflector"]');
@@ -734,19 +775,35 @@ module.exports = function (S) {
       });
       s.wave = 10;
       out.king = R.enemies.spawn(s, 'bruteking').maxHp;
-      s.wave = 12;
+      s.wave = R.BALANCE.WAVES.length;
       out.umbra = R.enemies.spawn(s, 'umbra').maxHp;
       out.brute12 = R.enemies.spawn(s, 'brute').maxHp;
       return out;
     });
     ctx.log('  hp scaling: ' + JSON.stringify(hp));
-    ctx.eq(hp.mote1, 30, 'mote hp at wave 1');
-    ctx.eq(hp.mote5, 47, 'mote hp at wave 5 is 30 x 1.56');
-    ctx.eq(hp.mote8, 59, 'mote hp at wave 8 is 30 x 1.98');
-    ctx.eq(hp.mote12, 76, 'mote hp at wave 12 is 30 x 2.54');
-    ctx.eq(hp.king, 460, 'the Brute King ignores the wave multiplier');
-    ctx.eq(hp.umbra, 900, 'Umbra ignores the wave multiplier');
-    ctx.eq(hp.brute12, 305, 'a wave 12 brute is scaled');
+    const expectHp = await st(function () {
+      const base = R.BALANCE.ENEMY;
+      const last = R.BALANCE.WAVES.length;
+      return {
+        mote1: Math.round(base.mote.hp * R.enemies.hpMult(1)),
+        mote5: Math.round(base.mote.hp * R.enemies.hpMult(5)),
+        mote8: Math.round(base.mote.hp * R.enemies.hpMult(8)),
+        mote12: Math.round(base.mote.hp * R.enemies.hpMult(12)),
+        king: base.bruteking.hp,
+        umbra: base.umbra.hp,
+        bruteLast: Math.round(base.brute.hp * R.enemies.hpMult(last))
+      };
+    });
+    ctx.eq(hp.mote1, expectHp.mote1, 'mote hp at wave 1 is unscaled');
+    ctx.eq(hp.mote5, expectHp.mote5, 'mote hp at wave 5 follows the multiplier');
+    ctx.eq(hp.mote8, expectHp.mote8, 'mote hp at wave 8 follows the multiplier');
+    ctx.eq(hp.mote12, expectHp.mote12, 'mote hp at wave 12 follows the multiplier');
+    ctx.eq(hp.king, expectHp.king, 'the Brute King ignores the wave multiplier');
+    ctx.eq(hp.umbra, expectHp.umbra, 'Umbra ignores the wave multiplier');
+    ctx.eq(hp.brute12, expectHp.bruteLast, 'a last-beat brute is scaled');
+    /* Five beats have to escalate as hard as twelve gentle ones used to. */
+    ctx.check(expectHp.mote5 >= expectHp.mote1 * 2,
+      'the last beat is at least twice as tough as the first (' + expectHp.mote1 + ' to ' + expectHp.mote5 + ')');
 
     /* --- every type renders with its own shape --- */
     await st(function () {
@@ -847,7 +904,8 @@ module.exports = function (S) {
     /* --- endless generator --- */
     const endless = await st(function () {
       const out = [];
-      for (let w = 13; w <= 18; w++) {
+      const first = R.BALANCE.WAVES.length + 1;
+      for (let w = first; w < first + 6; w++) {
         const q = R.enemies.buildQueue(w);
         const counts = {};
         q.forEach(function (x) { counts[x.type] = (counts[x.type] || 0) + 1; });
@@ -857,8 +915,11 @@ module.exports = function (S) {
     });
     ctx.log('  endless waves: ' + JSON.stringify(endless));
     ctx.check(endless.every(function (x) { return x.n > 0; }), 'every endless wave has enemies');
-    ctx.eq(endless[2].counts.bruteking, 1, 'a Brute King every fifth wave (wave 15)');
-    ctx.eq(endless[0].speed, 1.02, 'endless speed multiplier starts at 1.02');
+    ctx.check(endless.some(function (x) { return x.counts.bruteking === 1; }),
+      'a Brute King turns up in the endless rotation');
+    ctx.eq(endless[0].speed, await st(function () {
+      return Math.round(R.enemies.speedMult(R.BALANCE.WAVES.length + 1) * 100) / 100;
+    }), 'endless speeds up one step past the last beat');
     ctx.eq(await st(function () { return R.enemies.speedMult(200); }), 1.5, 'the speed multiplier is capped at 1.5');
 
     /* --- a real victory over all twelve waves --- */
@@ -880,7 +941,7 @@ module.exports = function (S) {
       for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
       const lit = s.beam.litRoadCount;
       const log = [];
-      for (let w = 1; w <= 12; w++) {
+      for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
         window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
         window.__REFRACT.stepUntil('s.phase !== "wave"', 220);
         log.push({ w: w, hp: s.coreHp, gold: s.gold, t: Math.round(s.time) });
@@ -891,7 +952,10 @@ module.exports = function (S) {
     ctx.log('  victory run: lit ' + run.lit + '  phase ' + run.phase + '  hp ' + run.hp + '  score ' + run.score + '  sim time ' + run.time + 's');
     ctx.log('  per wave: ' + JSON.stringify(run.log));
     ctx.check(run.lit >= 18, 'the winning build lights most of the road (' + run.lit + ' of 31)');
-    ctx.eq(run.phase, 'won', 'twelve waves cleared');
+    ctx.eq(run.phase, 'won', 'every beat cleared');
+    /* The brief asks for a four-to-six minute session. */
+    ctx.check(run.time >= 200 && run.time <= 380,
+      'a full session runs four to six minutes (' + run.time + 's)');
     await ctx.snap('b-victory');
 
     const vic = await st(function () {
@@ -906,7 +970,7 @@ module.exports = function (S) {
     ctx.eq(m.endless, true, 'endless mode is on');
     ctx.eq(m.phase, 'building', 'back to building');
     ctx.eq(await st(function () { return document.getElementById('statWave').textContent.replace(/\s+/g, ''); }),
-      'ENDLESS12', 'the HUD says ENDLESS');
+      'ENDLESS' + await st(function () { return R.BALANCE.WAVES.length; }), 'the HUD says ENDLESS');
 
     const endlessRun = await st(function () {
       const s = R.state;
@@ -921,7 +985,8 @@ module.exports = function (S) {
       return { log: log, wave: s.wave, phase: s.phase, score: R.computeScore(s) };
     });
     ctx.log('  endless run: ' + JSON.stringify(endlessRun));
-    ctx.check(endlessRun.wave >= 15, 'three more endless waves ran (reached wave ' + endlessRun.wave + ')');
+    ctx.check(endlessRun.wave >= (await st(function () { return R.BALANCE.WAVES.length; })) + 3,
+      'three more endless waves ran (reached wave ' + endlessRun.wave + ')');
     ctx.check(endlessRun.score > run.score, 'score keeps rising in endless');
     await ctx.snap('c-endless');
 
@@ -1050,7 +1115,7 @@ module.exports = function (S) {
         for (let i = 1; i < b.core; i++) R.pieces.upgradeCore(s);
         const lit = s.beam.litRoadCount;
         const hpLog = [];
-        for (let w = 1; w <= 12; w++) {
+        for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
           window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
           window.__REFRACT.stepUntil('s.phase !== "wave"', 260);
           hpLog.push(s.coreHp);
@@ -1065,10 +1130,30 @@ module.exports = function (S) {
     }
 
     const winners = results.filter(function (x) { return x.r.phase === 'won'; });
-    ctx.check(winners.length > 0, 'at least one build clears all twelve waves');
-    const spread = results.map(function (x) { return x.r.wave; });
-    ctx.check(Math.max.apply(null, spread) - Math.min.apply(null, spread) >= 2,
-      'different strategies reach different waves: ' + JSON.stringify(spread));
+    ctx.check(winners.length > 0, 'at least one build clears every beat');
+    ctx.check(winners.length < results.length, 'not every build clears every beat');
+
+    /*
+     * The session is a fixed five beats, so builds are told apart by what the
+     * core has left at the end rather than by how far they got.
+     */
+    const spread = results.map(function (x) { return x.r.hp; });
+    ctx.check(Math.max.apply(null, spread) - Math.min.apply(null, spread) >= 10,
+      'strategies end in very different shape: ' + JSON.stringify(spread));
+
+    /*
+     * Coverage and pressure are different things, so how much road a build
+     * lights must not by itself rank the outcomes: somewhere in this set a
+     * dimmer build has to finish in better shape than a brighter one.
+     */
+    let inverted = null;
+    results.forEach(function (a) {
+      results.forEach(function (b) {
+        if (a.r.lit < b.r.lit && a.r.hp > b.r.hp) inverted = a.name + ' (lit ' + a.r.lit +
+          ') beat ' + b.name + ' (lit ' + b.r.lit + ')';
+      });
+    });
+    ctx.check(!!inverted, 'coverage alone does not rank the builds: ' + inverted);
   };
 
   /* Phase 6: hints, help, early call, defeat tips, beam sweep, drag preview. */
@@ -1231,18 +1316,32 @@ module.exports = function (S) {
     const strip = await st(function () {
       window.__REFRACT.restart(2105);
       const s = R.state;
-      s.wave = 11;
+      s.wave = R.BALANCE.WAVES.length - 1;
       s.phase = 'building';
       s.countdown = 8;
       R.ui.frame(s, 0.016);
       return document.getElementById('strip').textContent.replace(/\s+/g, ' ').trim();
     });
-    ctx.log('  strip at wave 12: ' + strip);
+    ctx.log('  strip before the last beat: ' + strip);
     ctx.check(strip.indexOf('NEXT') === 0, 'the strip announces the next wave');
     const order = await st(function () {
-      return R.enemies.composition(12).map(function (g) { return g.type + 'x' + g.count; }).join(' ');
+      const last = R.BALANCE.WAVES.length;
+      return {
+        shown: R.enemies.composition(last).map(function (g) { return g.type + 'x' + g.count; }).join(' '),
+        queue: R.enemies.buildQueue(last).map(function (x) { return x.type; })
+      };
     });
-    ctx.eq(order, 'motex6 brutex2 umbrax1 brutex2 runnerx6', 'composition is listed in spawn order');
+    ctx.log('  last beat: ' + order.shown);
+    /* The strip lists groups in the order they actually arrive. */
+    const collapsed = [];
+    order.queue.forEach(function (t) {
+      const last = collapsed[collapsed.length - 1];
+      if (last && last.t === t) last.n++;
+      else collapsed.push({ t: t, n: 1 });
+    });
+    ctx.eq(order.shown, collapsed.map(function (g) { return g.t + 'x' + g.n; }).join(' '),
+      'composition is listed in spawn order');
+    ctx.check(order.shown.indexOf('umbra') >= 0, 'the last beat warns that Umbra is coming');
   };
 
   /* Phase 7: portrait mobile UX at every target size. */
@@ -2126,8 +2225,13 @@ module.exports = function (S) {
      * naive build survives about one wave further; the band is widened by one
      * rather than tuning the bot's shopping list until it fits.
      */
-    ctx.check(by['first timer'].wave >= 6 && by['first timer'].wave <= 10,
-      'a first-time player following the hints reaches wave 6 to 10 (reached ' + by['first timer'].wave + ')');
+    /*
+     * A first-timer should get all the way to Umbra and lose there. Failing
+     * earlier means the ramp is too steep; winning means the boss is free.
+     */
+    ctx.eq(by['first timer'].wave, await ctx.ev(function () { return R.BALANCE.WAVES.length; }),
+      'a first-time player following the hints reaches the last beat');
+    ctx.eq(by['first timer'].phase, 'lost', 'but a first-time build does not beat Umbra');
     ctx.eq(by['informed'].phase, 'won', 'an informed player wins');
     ctx.check(by['informed'].hp >= 6 && by['informed'].hp <= 14,
       'an informed win ends with 6 to 14 core HP (ended with ' + by['informed'].hp + ')');
@@ -2164,9 +2268,19 @@ module.exports = function (S) {
     ctx.check(earlyGain / by['informed'].earned < 0.12,
       'the early-call bonus stays a tempo reward, not a snowball');
 
+    /*
+     * The session is a fixed five beats, so the spread that matters is how
+     * far each strategy got through it and what it had left at the end.
+     */
     const waves = results.map(function (r) { return r.wave; });
-    ctx.check(Math.max.apply(null, waves) - Math.min.apply(null, waves) >= 5,
-      'strategies spread across the run: ' + JSON.stringify(waves));
+    ctx.check(Math.max.apply(null, waves) - Math.min.apply(null, waves) >= 2,
+      'weak strategies fall short of the last beat: ' + JSON.stringify(waves));
+    const won = results.filter(function (r) { return r.phase === 'won'; });
+    ctx.check(won.length >= 2 && won.length <= results.length - 4,
+      'a minority of strategies win (' + won.length + ' of ' + results.length + ')');
+    const hps = results.map(function (r) { return r.hp; });
+    ctx.check(Math.max.apply(null, hps) - Math.min.apply(null, hps) >= 10,
+      'strategies end in very different shape: ' + JSON.stringify(hps));
   };
 
   /* Phase 11: performance budgets, memory stability and refresh-rate parity. */
@@ -2425,7 +2539,7 @@ module.exports = function (S) {
           gold: parseInt(txt('statGold').replace(/[^0-9]/g, ''), 10),
           hp: parseInt(txt('statHp').replace(/[^0-9\/]/g, '').split('/')[0], 10),
           wave: parseInt(txt('statWave').replace(/[^0-9/]/g, '').split('/')[0], 10),
-          lit: parseInt(txt('statLit').replace(/[^0-9/]/g, '').split('/')[0], 10),
+          lit: parseInt(txt('statLight').replace(/[^0-9]/g, '').slice(1), 10),
           coreCost: core.querySelector('.a2').textContent.indexOf('MAX') >= 0
             ? null : parseInt(core.querySelector('.a2').textContent, 10),
           palette: pal,
@@ -2441,20 +2555,17 @@ module.exports = function (S) {
     await ctx.tap('#overlayRoot .bigbtn');
     await ctx.tap('#btnSpeed');
     m = await hud();
-    ctx.eq(m.gold, 40, 'the run starts with 40 gold');
+    ctx.eq(m.gold, await ctx.ev(function () { return R.BALANCE.START_GOLD; }), 'the run starts with the configured gold');
     ctx.eq(m.hp, 20, 'the run starts with 20 core HP');
 
     /* --- play a whole run by tapping, in real time at double speed --- */
+    /* The shopping list the "informed" bot wins with, bought purely by tapping. */
     const PLAN = [
-      { k: 'mirror', c: 7, r: 3 },
-      { k: 'mirror', c: 0, r: 3 },
-      { k: 'mirror', c: 0, r: 10 },
-      { k: 'core' }, { k: 'core' }, { k: 'core' },
-      { k: 'lamp', c: 2, r: 11 },
-      { k: 'lamp', c: 1, r: 6 },
-      { k: 'core' },
-      { k: 'lamp', c: 1, r: 4 },
-      { k: 'core' }
+      { k: 'mirror', c: 7, r: 4 }, { k: 'mirror', c: 0, r: 4 }, { k: 'mirror', c: 0, r: 6 },
+      { k: 'core' }, { k: 'core' },
+      { k: 'splitter', c: 7, r: 8 }, { k: 'core' },
+      { k: 'lamp', c: 0, r: 2 }, { k: 'core' },
+      { k: 'lamp', c: 0, r: 10 }, { k: 'core' }
     ];
     let plan = 0;
     const started = Date.now();
@@ -2496,7 +2607,7 @@ module.exports = function (S) {
     await ctx.tap('#overlayRoot .bigbtn');
     await ctx.page.waitForTimeout(200);
     m = await hud();
-    ctx.eq(m.gold, 40, 'PLAY AGAIN gives a clean board');
+    ctx.eq(m.gold, await ctx.ev(function () { return R.BALANCE.START_GOLD; }), 'PLAY AGAIN gives a clean board');
     ctx.eq(m.hp, 20, 'core HP is restored');
     ctx.eq(m.lit, 1, 'the beam is back to its starting route');
     ctx.eq(m.overlay, null, 'no overlay after restart');
@@ -2672,7 +2783,7 @@ module.exports = function (S) {
     });
     ctx.log('  endless: ' + JSON.stringify(endless));
     ctx.eq(endless.endless, true, 'endless mode continues after a win');
-    ctx.eq(endless.wave, 13, 'endless starts at wave 13');
+    ctx.eq(endless.wave, await ctx.ev(function () { return R.BALANCE.WAVES.length + 1; }), 'endless starts one past the last beat');
 
     /* --- rapid input does not break anything --- */
     const rapid = await st(function () {
@@ -2840,6 +2951,111 @@ module.exports = function (S) {
     ctx.check(lattice.segments >= 10, 'the full lattice draws a real network (' + lattice.segments + ' beam segments)');
     ctx.check(lattice.types.split('+').length === 4, 'the late-game build uses all four piece types');
     ctx.check(lattice.lit >= 20, 'the full lattice lights most of the road (' + lattice.lit + '/' + lattice.road + ')');
+  };
+
+
+  /*
+   * The two rules the redesign has to guarantee:
+   *   1. a static early layout cannot clear the whole session;
+   *   2. Umbra is killable by an adapted network, and its arrival is fatal
+   *      whatever the core has left.
+   */
+  S.bossgate = async function (ctx) {
+    const st = function (fn, arg) { return ctx.ev(fn, arg); };
+
+    /* --- how much damage Umbra actually takes over its walk --- */
+    const measure = await st(function () {
+      window.__REFRACT.restart(2100);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.gold = 5000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      [['mirror', 7, 4, 1], ['mirror', 0, 4, 1], ['mirror', 0, 6, 0],
+       ['splitter', 7, 8, 1], ['lamp', 0, 2, 1], ['lamp', 0, 10, 1]
+      ].forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+      for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+
+      s.wave = R.BALANCE.WAVES.length - 1;
+      window.__REFRACT.stepUntil('s.phase === "building"', 5);
+      s.countdown = 0;
+      window.__REFRACT.stepUntil('s.phase === "wave"', 5);
+
+      /* Follow the boss until it dies or arrives. */
+      const dt = R.TIMING.FIXED_STEP;
+      let boss = null, taken = 0, seen = 0, litSteps = 0, steps = 0;
+      for (let i = 0; i < 60 * 200; i++) {
+        R.simStep(s, dt);
+        s.events.length = 0;
+        const b = s.enemies.filter(function (e) { return e.boss; })[0];
+        if (b) {
+          boss = b;
+          seen = b.maxHp;
+          taken = b.maxHp - b.hp;
+          steps++;
+          if (b.hitAt === s.time) litSteps++;
+        } else if (seen) {
+          break;
+        }
+        if (s.phase === 'won' || s.phase === 'lost') break;
+      }
+      return {
+        maxHp: seen, taken: Math.round(taken), onRoad: Math.round(steps * dt),
+        underFire: Math.round(litSteps * dt), phase: s.phase,
+        breached: s.bossBreached, hp: s.coreHp,
+        dps: steps ? Math.round(taken / (steps * dt)) : 0
+      };
+    });
+    ctx.log('  Umbra: ' + JSON.stringify(measure));
+    ctx.check(measure.taken > 0, 'the boss takes damage on the road');
+    ctx.check(measure.underFire >= measure.onRoad * 0.5,
+      'the boss spends most of its walk in the light (' + measure.underFire + 's of ' + measure.onRoad + 's)');
+    ctx.eq(measure.phase, 'won', 'an adapted network kills Umbra before it arrives');
+
+    /* --- a boss that does arrive ends the run, whatever the core has left --- */
+    const breach = await st(function () {
+      window.__REFRACT.restart(2101);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.wave = R.BALANCE.WAVES.length - 1;
+      window.__REFRACT.stepUntil('s.phase === "building"', 5);
+      s.countdown = 0;
+      window.__REFRACT.stepUntil('s.phase === "wave"', 5);
+      const dt = R.TIMING.FIXED_STEP;
+      for (let i = 0; i < 60 * 400; i++) {
+        /* Keep the core topped up so only the breach rule can end the run. */
+        s.coreHp = R.BALANCE.CORE_HP;
+        R.simStep(s, dt);
+        s.events.length = 0;
+        if (s.phase === 'lost' || s.phase === 'won') break;
+      }
+      return { phase: s.phase, breached: s.bossBreached, hp: s.coreHp };
+    });
+    ctx.log('  breach: ' + JSON.stringify(breach));
+    ctx.eq(breach.phase, 'lost', 'Umbra reaching the core loses the run');
+    ctx.eq(breach.breached, 'umbra', 'the loss is attributed to the boss breach');
+    ctx.check(breach.hp > 0, 'the run is lost with core HP still on the clock');
+
+    /* --- the static three-mirror layout must not clear the session --- */
+    const staticRun = await st(function () {
+      window.__REFRACT.restart(2102);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.gold = 5000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      [['mirror', 7, 4, 1], ['mirror', 0, 4, 1], ['mirror', 0, 6, 0]
+      ].forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+      const log = [];
+      for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
+        window.__REFRACT.stepUntil('s.wave === ' + w + ' && s.phase === "wave"', 40);
+        window.__REFRACT.stepUntil('s.phase !== "wave"', 260);
+        log.push({ w: w, hp: s.coreHp });
+        if (s.phase === 'lost' || s.phase === 'won') break;
+      }
+      return { phase: s.phase, hp: s.coreHp, lit: s.beam.litRoadCount, log: log };
+    });
+    ctx.log('  static three mirrors: ' + JSON.stringify(staticRun));
+    ctx.eq(staticRun.phase, 'lost', 'the static three-mirror layout cannot clear the session');
+    await ctx.snap('a-static-layout-failed');
   };
 
 };

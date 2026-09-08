@@ -115,7 +115,7 @@ body.wide #sideNote { display: block; }
 .stat .lbl { font-size: 10px; letter-spacing: 0.1em; color: var(--ink-dim); }
 .stat .val { font-weight: 700; font-variant-numeric: tabular-nums; }
 .stat .sub { font-size: 11px; color: var(--ink-dim); }
-#statLit .val { color: var(--lit); }
+#statLight .val { color: var(--lit); }
 #statGold .val { color: var(--gold); }
 
 .stat.bump .val { animation: bump 260ms ease-out; }

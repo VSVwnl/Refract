@@ -143,7 +143,7 @@ body.wide #sideNote { display: block; }
 .stat .lbl { font-size: 10px; letter-spacing: 0.1em; color: var(--ink-dim); }
 .stat .val { font-weight: 700; font-variant-numeric: tabular-nums; }
 .stat .sub { font-size: 11px; color: var(--ink-dim); }
-#statLit .val { color: var(--lit); }
+#statLight .val { color: var(--lit); }
 #statGold .val { color: var(--gold); }
 
 .stat.bump .val { animation: bump 260ms ease-out; }
@@ -720,8 +720,8 @@ body.wide #sideNote { display: block; }
       <div id="stats">
         <div class="stat" id="statHp"><span class="ico hp">&#9829;</span><span class="val">20</span><span class="sub">/20</span></div>
         <div class="stat" id="statGold"><span class="ico gold">&#9670;</span><span class="val">40</span></div>
-        <div class="stat" id="statWave"><span class="lbl">WAVE</span><span class="val">0</span><span class="sub">/12</span></div>
-        <div class="stat" id="statLit"><span class="lbl">LIT</span><span class="val">0</span><span class="sub">/25</span></div>
+        <div class="stat" id="statWave"><span class="lbl">WAVE</span><span class="val">0</span><span class="sub">/5</span></div>
+        <div class="stat" id="statLight"><span class="lbl">PWR</span><span class="val">0</span><span class="sub">COV 0</span></div>
       </div>
       <div id="hudButtons">
         <button type="button" class="iconbtn" id="btnPause" aria-label="Pause"><i class="glyph-pause"></i></button>
@@ -785,11 +785,11 @@ body.wide #sideNote { display: block; }
     COLS: 8,
     ROWS: 12,
     CORE_HP: 20,
-    START_GOLD: 40,
+    START_GOLD: 60,
     CORE_POWER: [10, 13, 17, 22, 28, 35],
     CORE_UPGRADE_COST: [60, 100, 150, 220, 300],
     LAMP_FACTOR: 0.5,
-    SPLIT_FACTOR: 0.55,
+    SPLIT_FACTOR: 0.5,
     REFLECT_FACTOR: 0.6,
     MIN_POWER: 0.5,
     MAX_DEPTH: 48,
@@ -799,14 +799,14 @@ body.wide #sideNote { display: block; }
     SELL_RATE: 0.7,
     UNDO_WINDOW: 3.0,
     MOVE_REFORM: 0.75,
-    COUNTDOWN: 8,
+    COUNTDOWN: 10,
     FIRST_COUNTDOWN: 10,
     GROUP_GAP: 1.5,
     EARLY_CALL_RATE: 1.0,
-    WAVE_CLEAR_BASE: 12,
-    WAVE_CLEAR_PER_WAVE: 7,
-    HP_MULT_PER_WAVE: 0.14,
-    UNLOCK_WAVE: { splitter: 2, reflector: 4, lamp: 7 },
+    WAVE_CLEAR_BASE: 30,
+    WAVE_CLEAR_PER_WAVE: 22,
+    HP_MULT_PER_WAVE: 0.34,
+    UNLOCK_WAVE: { splitter: 2, reflector: 3, lamp: 4 },
     SPEED_OPTIONS: [1, 2],
     ENEMY: {
       mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, gold: 4,   leak: 1,  radius: 0.28 },
@@ -814,22 +814,25 @@ body.wide #sideNote { display: block; }
       swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, gold: 1,   leak: 1,  radius: 0.14 },
       brute:     { hp: 120, speed: 0.55, absorb: 0.70, gold: 16,  leak: 3,  radius: 0.36 },
       bruteking: { hp: 460, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
-      umbra:     { hp: 900, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
+      umbra:     { hp: 520, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
-    /* Each group is [type, count, gapSeconds]; groups run in order with GROUP_GAP between them. */
+    /*
+     * Five encounter beats, each testing a different distribution of light.
+     * Each group is [type, count, gapSeconds]; groups run in order with
+     * GROUP_GAP between them.
+     *
+     * 1 Opening      one slow group; connect a route change to damage.
+     * 2 Shield       a brute walks in front and shields the motes behind it.
+     * 3 Distribution a swarm and an armoured target want different answers.
+     * 4 Pressure     two lanes' worth of traffic at once; one angle is short.
+     * 5 Umbra        the boss, escorted. It must die and must never arrive.
+     */
     WAVES: [
-      [ ['mote', 4, 1.5] ],
-      [ ['mote', 7, 1.2] ],
-      [ ['runner', 4, 0.8], ['mote', 5, 1.2] ],
-      [ ['mote', 10, 0.9], ['runner', 3, 0.7] ],
-      [ ['brute', 2, 2.0], ['mote', 6, 1.0] ],
-      [ ['swarmling', 8, 0.3], ['swarmling', 8, 0.3], ['runner', 4, 0.7] ],
-      [ ['brute', 3, 1.5], ['mote', 8, 0.8] ],
-      [ ['mote', 14, 0.6], ['runner', 6, 0.5] ],
-      [ ['swarmling', 8, 0.25], ['swarmling', 8, 0.25], ['swarmling', 8, 0.25], ['brute', 2, 1.5] ],
-      [ ['bruteking', 1, 0], ['runner', 8, 0.6] ],
-      [ ['brute', 4, 1.2], ['mote', 10, 0.6], ['swarmling', 8, 0.25], ['swarmling', 8, 0.25] ],
-      [ ['mote', 6, 0.7], ['brute', 2, 1.5], ['umbra', 1, 0], ['brute', 2, 1.5], ['runner', 6, 0.5] ]
+      [ ['mote', 5, 1.2] ],
+      [ ['brute', 1, 0], ['mote', 7, 0.9] ],
+      [ ['swarmling', 10, 0.28], ['brute', 1, 0], ['runner', 5, 0.6] ],
+      [ ['brute', 2, 1.4], ['mote', 8, 0.7], ['swarmling', 10, 0.25], ['runner', 6, 0.5] ],
+      [ ['mote', 5, 0.7], ['brute', 2, 1.2], ['umbra', 1, 0], ['runner', 6, 0.5] ]
     ],
     ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
   };
@@ -1484,6 +1487,8 @@ body.wide #sideNote { display: block; }
       goldEarned: 0,
       coreHp: B.CORE_HP,
       coreLevel: 1,
+      /* Enemy type of a boss that reached the core; ends the run when set. */
+      bossBreached: null,
       score: 0,
       wavesCleared: 0,
       grid: { cols: B.COLS, rows: B.ROWS, kind: board.kind },
@@ -1689,6 +1694,8 @@ body.wide #sideNote { display: block; }
       lit: new Float32Array(CELLS),
       litRoadCount: 0,
       litRoadPower: 0,
+      /* Power actually landing on enemies, i.e. damage per second. */
+      pressure: 0,
       totalPower: 0,
       overflow: false,
       version: 0
@@ -1804,6 +1811,11 @@ body.wide #sideNote { display: block; }
         var ordered = orderAlong(list, dir);
         for (var k = 0; k < ordered.length; k++) {
           var e = ordered[k];
+          /*
+           * Pressure counts the power that reaches each enemy, so it is the
+           * same number whether this is a preview (dt 0) or a live step.
+           */
+          out.pressure += power;
           if (stepDt > 0) {
             e.damage += power * stepDt;
             e.hitAt = nowTime;
@@ -1881,6 +1893,7 @@ body.wide #sideNote { display: block; }
     out.segCount = 0;
     out.totalPower = 0;
     out.litRoadPower = 0;
+    out.pressure = 0;
     out.overflow = false;
     out.lit.fill(0);
 
@@ -2044,7 +2057,8 @@ body.wide #sideNote { display: block; }
 */
 /*
  * Enemies and waves. Enemies walk the fixed path, absorb light, die or reach
- * the core. Waves are read from the balance table and generated after wave 12.
+ * the core. Waves are read from the balance table and generated past the last
+ * scripted beat.
  */
 (function (global) {
   'use strict';
@@ -2079,14 +2093,15 @@ body.wide #sideNote { display: block; }
   };
 
   en.speedMult = function (wave) {
-    if (wave <= 12) return 1;
-    return Math.min(B.ENDLESS.SPEED_CAP, 1 + B.ENDLESS.SPEED_PER_WAVE * (wave - 12));
+    var last = B.WAVES.length;
+    if (wave <= last) return 1;
+    return Math.min(B.ENDLESS.SPEED_CAP, 1 + B.ENDLESS.SPEED_PER_WAVE * (wave - last));
   };
 
   /* Endless waves rotate through four shapes and add a king every fifth wave. */
   en.endlessGroups = function (wave) {
     var count = B.ENDLESS.BASE_COUNT + wave;
-    var pattern = (wave - 13) % 4;
+    var pattern = (wave - B.WAVES.length - 1) % 4;
     var groups = [];
     if (pattern === 0) {
       groups.push(['mote', count, 0.6]);
@@ -2261,6 +2276,14 @@ body.wide #sideNote { display: block; }
         s.coreHp -= e.leak;
         s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;
         R.emit(s, 'leak', { enemy: e.type, leak: e.leak, x: e.x, z: e.z, id: e.id });
+        /*
+         * A boss that arrives ends the run outright. Surviving the hit is not
+         * a win: the session is only won by destroying it on the road.
+         */
+        if (e.boss) {
+          s.bossBreached = e.type;
+          R.emit(s, 'breach', { enemy: e.type, x: e.x, z: e.z, id: e.id });
+        }
         pool.push(e);
       }
     }
@@ -4056,7 +4079,7 @@ body.wide #sideNote { display: block; }
   ui.bumpGold = function () { pulse(el.statGold, 'bump'); };
   ui.shakeGold = function () { pulse(el.statGold, 'shake'); };
   ui.shakeHp = function () { pulse(el.statHp, 'shake'); };
-  ui.pulseLit = function () { pulse(el.statLit, 'bump'); };
+  ui.pulseLight = function () { pulse(el.statLight, 'bump'); };
 
   /* ---------- incoming strip ---------- */
 
@@ -4101,11 +4124,17 @@ body.wide #sideNote { display: block; }
     setText(el.goldVal, String(Math.floor(s.gold)));
     setText(el.waveLbl, s.endless ? 'ENDLESS' : 'WAVE');
     setText(el.waveVal, String(s.wave));
-    setText(el.waveSub, s.endless ? '' : '/12');
-    if (s.beam.litRoadCount > lastLit) ui.pulseLit();
-    lastLit = s.beam.litRoadCount;
-    setText(el.litVal, String(s.beam.litRoadCount));
-    setText(el.litSub, '/' + s.roadCells);
+    setText(el.waveSub, s.endless ? '' : '/' + B.WAVES.length);
+    /*
+     * Two readings, not one: PWR is the light actually landing on enemies
+     * (damage per second) and COV is how much of the road is lit. A wide but
+     * weak network scores well on COV and badly on PWR, which is the point.
+     */
+    var pwr = Math.round(s.beam.pressure);
+    if (pwr > lastPwr) ui.pulseLight();
+    lastPwr = pwr;
+    setText(el.pwrVal, String(pwr));
+    setText(el.covVal, 'COV ' + s.beam.litRoadCount);
 
     var html = stripHtml(s);
     if (cache.strip !== html) {
@@ -4117,7 +4146,7 @@ body.wide #sideNote { display: block; }
   /* ---------- events ---------- */
 
   var goldFloaterAt = 0;
-  var lastLit = 0;
+  var lastPwr = 0;
 
   ui.handleEvents = function (s) {
     for (var i = 0; i < s.events.length; i++) {
@@ -4170,7 +4199,7 @@ body.wide #sideNote { display: block; }
           ui.banner(s.endless ? 'ENDLESS ' + e.wave : 'WAVE ' + e.wave, null, 1.5);
           break;
         case 'runstart':
-          lastLit = 0;
+          lastPwr = 0;
           ui.hint(s, 'start', 7);
           break;
         case 'spawn':
@@ -4270,7 +4299,7 @@ body.wide #sideNote { display: block; }
     umbra: 'Umbra absorbs almost everything. Upgrade the core and light the long segments so it is burning for as long as possible.',
     swarmling: 'Swarms drain a beam fast: each one takes a bite before the light reaches the next. Split the light, or add a Lamp as a second source.',
     runner: 'Runners cross a single lit cell in half a second. Light a whole road segment lengthwise so they stay in the light.',
-    mote: 'Light along the road burns for the whole segment; light across it burns for one cell. Try to get LIT above 15.'
+    mote: 'Light along the road burns for the whole segment; light across it burns for one cell. Push COVERAGE up so they stay in the light for longer.'
   };
 
   function defeatTip(s) {
@@ -4293,7 +4322,7 @@ body.wide #sideNote { display: block; }
     var h = node('h2', null, 'THE CORE FELL');
     h.style.color = '#ff5d6c';
     wrap.appendChild(h);
-    wrap.appendChild(statLine('Reached wave', s.wave + ' of 12'));
+    wrap.appendChild(statLine('Reached wave', s.wave + ' of ' + B.WAVES.length));
     wrap.appendChild(statLine('Score', s.score));
     if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
     wrap.appendChild(node('div', 'tip', defeatTip(s)));
@@ -4307,7 +4336,7 @@ body.wide #sideNote { display: block; }
     wrap.appendChild(h);
     wrap.appendChild(statLine('Waves cleared', s.wavesCleared));
     wrap.appendChild(statLine('Core HP left', s.coreHp + ' of ' + B.CORE_HP));
-    wrap.appendChild(statLine('Road lit', s.beam.litRoadCount + ' of ' + s.roadCells));
+    wrap.appendChild(statLine('Coverage', s.beam.litRoadCount + ' of ' + s.roadCells + ' road cells'));
     wrap.appendChild(statLine('Score', s.score));
     if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
     wrap.appendChild(button('bigbtn', 'PLAY AGAIN', function () { R.restartRun(); }));
@@ -4595,7 +4624,7 @@ body.wide #sideNote { display: block; }
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
     brute: 'Brutes soak up the light. Anything walking behind one is shielded.',
     swarm: 'Swarms drain a beam fast. Split it, or add a second source.',
-    splitter: 'SPLITTER unlocked: passes and bends at the same time, 55% each way.',
+    splitter: 'SPLITTER unlocked: passes and bends at the same time, half the power each way.',
     reflector: 'REFLECTOR unlocked: sends the light back down the same chain at 60%.',
     lamp: 'LAMP unlocked: a second source, half the core power, aim it anywhere.',
     core: 'Gold also buys core power. A brighter beam burns everything faster.'
@@ -4635,7 +4664,7 @@ body.wide #sideNote { display: block; }
     var rows = node('div', 'rows');
     var lines = [
       ['MIRROR', 'Bends the beam a quarter turn. No power lost.'],
-      ['SPLITTER', 'Passes straight <b>and</b> bends, at 55% each.'],
+      ['SPLITTER', 'Passes straight <b>and</b> bends, at half power each.'],
       ['REFLECTOR', 'Sends the light back the way it came at 60%, so it meets the road from the other end.'],
       ['LAMP', 'A second source at half the core power, aimed wherever you turn it.'],
       ['CORE', 'Upgrading the core brightens the beam and every lamp with it.'],
@@ -4755,14 +4784,14 @@ body.wide #sideNote { display: block; }
     el.statHp = byId('statHp');
     el.statGold = byId('statGold');
     el.statWave = byId('statWave');
-    el.statLit = byId('statLit');
+    el.statLight = byId('statLight');
     el.hpVal = key(el.statHp.querySelector('.val'), 'hpVal');
     el.goldVal = key(el.statGold.querySelector('.val'), 'goldVal');
     el.waveLbl = key(el.statWave.querySelector('.lbl'), 'waveLbl');
     el.waveVal = key(el.statWave.querySelector('.val'), 'waveVal');
     el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
-    el.litVal = key(el.statLit.querySelector('.val'), 'litVal');
-    el.litSub = key(el.statLit.querySelector('.sub'), 'litSub');
+    el.pwrVal = key(el.statLight.querySelector('.val'), 'pwrVal');
+    el.covVal = key(el.statLight.querySelector('.sub'), 'covVal');
     el.strip = byId('strip');
     el.stripText = key(byId('stripText'), 'strip');
     el.overlayRoot = byId('overlayRoot');
@@ -4810,7 +4839,7 @@ body.wide #sideNote { display: block; }
     cache = {};
     stripNotice = '';
     stripNoticeUntil = 0;
-    lastLit = 0;
+    lastPwr = 0;
     vignetteLevel = 0;
     if (vignette) vignette.style.opacity = '0';
     ui.clearBanners();
@@ -5288,6 +5317,12 @@ body.wide #sideNote { display: block; }
       return;
     }
 
+    /* A boss arrival is fatal on its own, whatever is left of the core. */
+    if (s.bossBreached && s.phase !== 'lost') {
+      R.endRun(s, false);
+      return;
+    }
+
     if (s.phase === 'wave' && R.enemies.waveComplete(s)) R.finishWave(s);
   };
 
@@ -5589,6 +5624,7 @@ body.wide #sideNote { display: block; }
           coreLevel: s.coreLevel,
           score: R.computeScore(s),
           lit: s.beam.litRoadCount,
+          pressure: Math.round(s.beam.pressure * 10) / 10,
           segments: s.beam.segCount,
           totalPower: Math.round(s.beam.totalPower * 100) / 100,
           pieces: pieces,

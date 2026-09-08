@@ -213,6 +213,12 @@
       return;
     }
 
+    /* A boss arrival is fatal on its own, whatever is left of the core. */
+    if (s.bossBreached && s.phase !== 'lost') {
+      R.endRun(s, false);
+      return;
+    }
+
     if (s.phase === 'wave' && R.enemies.waveComplete(s)) R.finishWave(s);
   };
 

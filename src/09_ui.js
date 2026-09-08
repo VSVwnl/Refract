@@ -127,7 +127,7 @@
   ui.bumpGold = function () { pulse(el.statGold, 'bump'); };
   ui.shakeGold = function () { pulse(el.statGold, 'shake'); };
   ui.shakeHp = function () { pulse(el.statHp, 'shake'); };
-  ui.pulseLit = function () { pulse(el.statLit, 'bump'); };
+  ui.pulseLight = function () { pulse(el.statLight, 'bump'); };
 
   /* ---------- incoming strip ---------- */
 
@@ -172,11 +172,17 @@
     setText(el.goldVal, String(Math.floor(s.gold)));
     setText(el.waveLbl, s.endless ? 'ENDLESS' : 'WAVE');
     setText(el.waveVal, String(s.wave));
-    setText(el.waveSub, s.endless ? '' : '/12');
-    if (s.beam.litRoadCount > lastLit) ui.pulseLit();
-    lastLit = s.beam.litRoadCount;
-    setText(el.litVal, String(s.beam.litRoadCount));
-    setText(el.litSub, '/' + s.roadCells);
+    setText(el.waveSub, s.endless ? '' : '/' + B.WAVES.length);
+    /*
+     * Two readings, not one: PWR is the light actually landing on enemies
+     * (damage per second) and COV is how much of the road is lit. A wide but
+     * weak network scores well on COV and badly on PWR, which is the point.
+     */
+    var pwr = Math.round(s.beam.pressure);
+    if (pwr > lastPwr) ui.pulseLight();
+    lastPwr = pwr;
+    setText(el.pwrVal, String(pwr));
+    setText(el.covVal, 'COV ' + s.beam.litRoadCount);
 
     var html = stripHtml(s);
     if (cache.strip !== html) {
@@ -188,7 +194,7 @@
   /* ---------- events ---------- */
 
   var goldFloaterAt = 0;
-  var lastLit = 0;
+  var lastPwr = 0;
 
   ui.handleEvents = function (s) {
     for (var i = 0; i < s.events.length; i++) {
@@ -241,7 +247,7 @@
           ui.banner(s.endless ? 'ENDLESS ' + e.wave : 'WAVE ' + e.wave, null, 1.5);
           break;
         case 'runstart':
-          lastLit = 0;
+          lastPwr = 0;
           ui.hint(s, 'start', 7);
           break;
         case 'spawn':
@@ -341,7 +347,7 @@
     umbra: 'Umbra absorbs almost everything. Upgrade the core and light the long segments so it is burning for as long as possible.',
     swarmling: 'Swarms drain a beam fast: each one takes a bite before the light reaches the next. Split the light, or add a Lamp as a second source.',
     runner: 'Runners cross a single lit cell in half a second. Light a whole road segment lengthwise so they stay in the light.',
-    mote: 'Light along the road burns for the whole segment; light across it burns for one cell. Try to get LIT above 15.'
+    mote: 'Light along the road burns for the whole segment; light across it burns for one cell. Push COVERAGE up so they stay in the light for longer.'
   };
 
   function defeatTip(s) {
@@ -364,7 +370,7 @@
     var h = node('h2', null, 'THE CORE FELL');
     h.style.color = '#ff5d6c';
     wrap.appendChild(h);
-    wrap.appendChild(statLine('Reached wave', s.wave + ' of 12'));
+    wrap.appendChild(statLine('Reached wave', s.wave + ' of ' + B.WAVES.length));
     wrap.appendChild(statLine('Score', s.score));
     if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
     wrap.appendChild(node('div', 'tip', defeatTip(s)));
@@ -378,7 +384,7 @@
     wrap.appendChild(h);
     wrap.appendChild(statLine('Waves cleared', s.wavesCleared));
     wrap.appendChild(statLine('Core HP left', s.coreHp + ' of ' + B.CORE_HP));
-    wrap.appendChild(statLine('Road lit', s.beam.litRoadCount + ' of ' + s.roadCells));
+    wrap.appendChild(statLine('Coverage', s.beam.litRoadCount + ' of ' + s.roadCells + ' road cells'));
     wrap.appendChild(statLine('Score', s.score));
     if (R.meta.best > 0) wrap.appendChild(node('p', 'tag', 'BEST ' + R.meta.best));
     wrap.appendChild(button('bigbtn', 'PLAY AGAIN', function () { R.restartRun(); }));
@@ -666,7 +672,7 @@
     along: 'Light along the road burns for the whole segment. Across it, only one cell.',
     brute: 'Brutes soak up the light. Anything walking behind one is shielded.',
     swarm: 'Swarms drain a beam fast. Split it, or add a second source.',
-    splitter: 'SPLITTER unlocked: passes and bends at the same time, 55% each way.',
+    splitter: 'SPLITTER unlocked: passes and bends at the same time, half the power each way.',
     reflector: 'REFLECTOR unlocked: sends the light back down the same chain at 60%.',
     lamp: 'LAMP unlocked: a second source, half the core power, aim it anywhere.',
     core: 'Gold also buys core power. A brighter beam burns everything faster.'
@@ -706,7 +712,7 @@
     var rows = node('div', 'rows');
     var lines = [
       ['MIRROR', 'Bends the beam a quarter turn. No power lost.'],
-      ['SPLITTER', 'Passes straight <b>and</b> bends, at 55% each.'],
+      ['SPLITTER', 'Passes straight <b>and</b> bends, at half power each.'],
       ['REFLECTOR', 'Sends the light back the way it came at 60%, so it meets the road from the other end.'],
       ['LAMP', 'A second source at half the core power, aimed wherever you turn it.'],
       ['CORE', 'Upgrading the core brightens the beam and every lamp with it.'],
@@ -826,14 +832,14 @@
     el.statHp = byId('statHp');
     el.statGold = byId('statGold');
     el.statWave = byId('statWave');
-    el.statLit = byId('statLit');
+    el.statLight = byId('statLight');
     el.hpVal = key(el.statHp.querySelector('.val'), 'hpVal');
     el.goldVal = key(el.statGold.querySelector('.val'), 'goldVal');
     el.waveLbl = key(el.statWave.querySelector('.lbl'), 'waveLbl');
     el.waveVal = key(el.statWave.querySelector('.val'), 'waveVal');
     el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
-    el.litVal = key(el.statLit.querySelector('.val'), 'litVal');
-    el.litSub = key(el.statLit.querySelector('.sub'), 'litSub');
+    el.pwrVal = key(el.statLight.querySelector('.val'), 'pwrVal');
+    el.covVal = key(el.statLight.querySelector('.sub'), 'covVal');
     el.strip = byId('strip');
     el.stripText = key(byId('stripText'), 'strip');
     el.overlayRoot = byId('overlayRoot');
@@ -881,7 +887,7 @@
     cache = {};
     stripNotice = '';
     stripNoticeUntil = 0;
-    lastLit = 0;
+    lastPwr = 0;
     vignetteLevel = 0;
     if (vignette) vignette.style.opacity = '0';
     ui.clearBanners();

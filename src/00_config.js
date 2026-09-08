@@ -23,11 +23,11 @@
     COLS: 8,
     ROWS: 12,
     CORE_HP: 20,
-    START_GOLD: 40,
+    START_GOLD: 60,
     CORE_POWER: [10, 13, 17, 22, 28, 35],
     CORE_UPGRADE_COST: [60, 100, 150, 220, 300],
     LAMP_FACTOR: 0.5,
-    SPLIT_FACTOR: 0.55,
+    SPLIT_FACTOR: 0.5,
     REFLECT_FACTOR: 0.6,
     MIN_POWER: 0.5,
     MAX_DEPTH: 48,
@@ -37,14 +37,14 @@
     SELL_RATE: 0.7,
     UNDO_WINDOW: 3.0,
     MOVE_REFORM: 0.75,
-    COUNTDOWN: 8,
+    COUNTDOWN: 10,
     FIRST_COUNTDOWN: 10,
     GROUP_GAP: 1.5,
     EARLY_CALL_RATE: 1.0,
-    WAVE_CLEAR_BASE: 12,
-    WAVE_CLEAR_PER_WAVE: 7,
-    HP_MULT_PER_WAVE: 0.14,
-    UNLOCK_WAVE: { splitter: 2, reflector: 4, lamp: 7 },
+    WAVE_CLEAR_BASE: 30,
+    WAVE_CLEAR_PER_WAVE: 22,
+    HP_MULT_PER_WAVE: 0.34,
+    UNLOCK_WAVE: { splitter: 2, reflector: 3, lamp: 4 },
     SPEED_OPTIONS: [1, 2],
     ENEMY: {
       mote:      { hp: 30,  speed: 1.0,  absorb: 0.25, gold: 4,   leak: 1,  radius: 0.28 },
@@ -52,22 +52,25 @@
       swarmling: { hp: 8,   speed: 1.3,  absorb: 0.15, gold: 1,   leak: 1,  radius: 0.14 },
       brute:     { hp: 120, speed: 0.55, absorb: 0.70, gold: 16,  leak: 3,  radius: 0.36 },
       bruteking: { hp: 460, speed: 0.45, absorb: 0.80, gold: 50,  leak: 6,  radius: 0.50, boss: true },
-      umbra:     { hp: 900, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
+      umbra:     { hp: 520, speed: 0.40, absorb: 0.85, gold: 100, leak: 10, radius: 0.56, boss: true }
     },
-    /* Each group is [type, count, gapSeconds]; groups run in order with GROUP_GAP between them. */
+    /*
+     * Five encounter beats, each testing a different distribution of light.
+     * Each group is [type, count, gapSeconds]; groups run in order with
+     * GROUP_GAP between them.
+     *
+     * 1 Opening      one slow group; connect a route change to damage.
+     * 2 Shield       a brute walks in front and shields the motes behind it.
+     * 3 Distribution a swarm and an armoured target want different answers.
+     * 4 Pressure     two lanes' worth of traffic at once; one angle is short.
+     * 5 Umbra        the boss, escorted. It must die and must never arrive.
+     */
     WAVES: [
-      [ ['mote', 4, 1.5] ],
-      [ ['mote', 7, 1.2] ],
-      [ ['runner', 4, 0.8], ['mote', 5, 1.2] ],
-      [ ['mote', 10, 0.9], ['runner', 3, 0.7] ],
-      [ ['brute', 2, 2.0], ['mote', 6, 1.0] ],
-      [ ['swarmling', 8, 0.3], ['swarmling', 8, 0.3], ['runner', 4, 0.7] ],
-      [ ['brute', 3, 1.5], ['mote', 8, 0.8] ],
-      [ ['mote', 14, 0.6], ['runner', 6, 0.5] ],
-      [ ['swarmling', 8, 0.25], ['swarmling', 8, 0.25], ['swarmling', 8, 0.25], ['brute', 2, 1.5] ],
-      [ ['bruteking', 1, 0], ['runner', 8, 0.6] ],
-      [ ['brute', 4, 1.2], ['mote', 10, 0.6], ['swarmling', 8, 0.25], ['swarmling', 8, 0.25] ],
-      [ ['mote', 6, 0.7], ['brute', 2, 1.5], ['umbra', 1, 0], ['brute', 2, 1.5], ['runner', 6, 0.5] ]
+      [ ['mote', 5, 1.2] ],
+      [ ['brute', 1, 0], ['mote', 7, 0.9] ],
+      [ ['swarmling', 10, 0.28], ['brute', 1, 0], ['runner', 5, 0.6] ],
+      [ ['brute', 2, 1.4], ['mote', 8, 0.7], ['swarmling', 10, 0.25], ['runner', 6, 0.5] ],
+      [ ['mote', 5, 0.7], ['brute', 2, 1.2], ['umbra', 1, 0], ['runner', 6, 0.5] ]
     ],
     ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
   };

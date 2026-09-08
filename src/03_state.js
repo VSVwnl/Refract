@@ -67,6 +67,8 @@
       goldEarned: 0,
       coreHp: B.CORE_HP,
       coreLevel: 1,
+      /* Enemy type of a boss that reached the core; ends the run when set. */
+      bossBreached: null,
       score: 0,
       wavesCleared: 0,
       grid: { cols: B.COLS, rows: B.ROWS, kind: board.kind },

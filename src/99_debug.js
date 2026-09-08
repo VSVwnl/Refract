@@ -165,6 +165,7 @@
           coreLevel: s.coreLevel,
           score: R.computeScore(s),
           lit: s.beam.litRoadCount,
+          pressure: Math.round(s.beam.pressure * 10) / 10,
           segments: s.beam.segCount,
           totalPower: Math.round(s.beam.totalPower * 100) / 100,
           pieces: pieces,

@@ -1,6 +1,7 @@
 /*
  * Enemies and waves. Enemies walk the fixed path, absorb light, die or reach
- * the core. Waves are read from the balance table and generated after wave 12.
+ * the core. Waves are read from the balance table and generated past the last
+ * scripted beat.
  */
 (function (global) {
   'use strict';
@@ -35,14 +36,15 @@
   };
 
   en.speedMult = function (wave) {
-    if (wave <= 12) return 1;
-    return Math.min(B.ENDLESS.SPEED_CAP, 1 + B.ENDLESS.SPEED_PER_WAVE * (wave - 12));
+    var last = B.WAVES.length;
+    if (wave <= last) return 1;
+    return Math.min(B.ENDLESS.SPEED_CAP, 1 + B.ENDLESS.SPEED_PER_WAVE * (wave - last));
   };
 
   /* Endless waves rotate through four shapes and add a king every fifth wave. */
   en.endlessGroups = function (wave) {
     var count = B.ENDLESS.BASE_COUNT + wave;
-    var pattern = (wave - 13) % 4;
+    var pattern = (wave - B.WAVES.length - 1) % 4;
     var groups = [];
     if (pattern === 0) {
       groups.push(['mote', count, 0.6]);
@@ -217,6 +219,14 @@
         s.coreHp -= e.leak;
         s.leaksBy[e.type] = (s.leaksBy[e.type] || 0) + 1;
         R.emit(s, 'leak', { enemy: e.type, leak: e.leak, x: e.x, z: e.z, id: e.id });
+        /*
+         * A boss that arrives ends the run outright. Surviving the hit is not
+         * a win: the session is only won by destroying it on the road.
+         */
+        if (e.boss) {
+          s.bossBreached = e.type;
+          R.emit(s, 'breach', { enemy: e.type, x: e.x, z: e.z, id: e.id });
+        }
         pool.push(e);
       }
     }
