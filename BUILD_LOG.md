@@ -22,6 +22,7 @@ Design (locked in the design session before any code existed; see `MASTER_SPEC.m
 - Planning is untimed. Combat is paused between encounters until the player taps START WAVE; there is no countdown and no reward for starting early. Moving, turning and selling pieces during planning is free and refunds the price paid; mid-combat a moved piece goes dark for 0.3 s and a sale returns the sell rate.
 - Enemies: Mote, Runner, Swarmling, Bulwark, Brute King, Umbra. Absorption (how much light a body removes from what continues past it) and shielding (how much damage is deflected when light meets the face it walks towards) are separate constants.
 - Umbra advances shielded, then drops the shield at 45 percent of the road for the rest of the walk. About 56 s on the road.
+- Run upgrades: after encounters 2 and 5 the run stops and offers three of six (Crossfire, Afterglow, Piercing Light, Focused Core, Twin Flames, Long Reach). Focused Core and Twin Flames exclude each other. They last the run and are cleared on restart. Core levels stay a plain supporting spend.
 - Terminal rules: the run is won only by destroying Umbra. A boss that reaches the core loses the run outright, whatever core HP is left.
 - Scope: one map, four pieces, six enemy types incl. two bosses, no meta-progression, no menus beyond title/help/results.
 - Art: Three.js primitives only, procedural canvas textures, DOM HUD, no image/audio/font files. Legibility first.
@@ -1104,4 +1105,36 @@ All the section 15 targets hold: placing nothing loses on wave 3, the informed l
 6. *Unfamiliar-player testing.* None has happened. No claim is made about how the game reads to someone new.
 
 **Result:** A complete, winnable eight-encounter run with an untimed planning phase, a directional-shield enemy, a two-phase boss and two distinguishable endings. Every automated check that can run in this environment passes.
+
+---
+
+## Session 5b - Run upgrades
+
+**Goal:** The progression layer from revision 2, which was the largest remaining engagement item and the one that does not need the map redesign.
+
+**Implemented.** After encounters 2 and 5 the run stops on a choice of three from six. The offer is drawn from the run's own seeded RNG, so a seed always offers the same choices; it never contains something already taken or excluded by something taken. Nothing simulates behind the choice screen, so three descriptions can be read without a clock running. Taken upgrades show as small tags under the incoming strip and are cleared on restart.
+
+| Upgrade | Effect | Decision it creates |
+| --- | --- | --- |
+| Crossfire | +25% when a body is reached from two different directions in the same step, counted once | build intersections, or add a return pass |
+| Afterglow | a hit leaves a refreshable 0.75 s tail at about a third of that power | separated crossings become worth something against fast movers |
+| Piercing Light | bodies absorb a quarter less, shields untouched | push power through a dense line instead of going round it |
+| Focused Core | core x1.34, lamps x0.66 | commit to one efficient central network |
+| Twin Flames | lamps x1.65, core x0.8 | commit to several independent sources |
+| Long Reach | splitter branches 0.6 each instead of 0.5 | spreading light costs less |
+
+**Two things the brief warned about, and how each is handled.**
+
+- *Derived lamp power cancelling the trade-off.* Lamp power was `corePower(level) * LAMP_FACTOR`, so anything raising the core raised lamps with it and Focused Core would have been a straight buff. `R.beam.coreOutput` and `R.beam.lampOutput` now scale independently from the same base, and the `upgrades` scenario asserts that Focused Core lowers lamp output while raising core output.
+- *Crossfire and Afterglow compounding.* Crossfire is applied once to the step total in `resolveStep`, after the solver has recorded which directions reached each body, so however many beams arrive there is exactly one bonus. The test measures the ratio at 1.25 exactly. Afterglow refreshes rather than stacks and is only added on steps where nothing hit, so the tail can never feed itself; the test walks a body out of the beam to see it and asserts the total stays under twice the in-beam damage.
+
+**Where the upgrade lookups live.** `hasUpgrade`, `upgradeValue` and `eligibleUpgrades` were written into `11_game.js` first, which broke all 26 headless solver tests: that file is not loaded by `tools/test-beam.js`, and the solver reads upgrades on every step. They were moved to `03_state.js`, which is loaded, and the tests went green again.
+
+**A real UI bug the new content exposed.** Adding two help topics pushed the BACK button below the fold, and it could not be tapped. The cause was general: a flex column with `justify-content: center` and `overflow-y: auto` puts content out of reach once it overflows. The long overlays now stack from the top and scroll the list inside its own pane, so the button beneath stays on screen. The same treatment is applied to the choice screen. Verified by eye at 360x640.
+
+**Help screen** rewritten for the current rules: ABSORPTION and SHIELDS are now separate entries, and PLANNING and UPGRADES were added.
+
+**Evidence.** 26 Node tests pass. `build.js && check.js` pass. All 21 browser scenarios pass, plus a new `upgrades` scenario (29 checks: the offer shape at both points, that the run really is stopped while it is up, a with-and-without measurement for every one of the six, the Crossfire ratio, the Afterglow tail, mutual exclusion, and a clean reset). The release build served from `tools/static.js` plays to a win by tapping only, now including tapping the upgrade cards: eight encounters, 10 of 20 core HP, 187 s at 2x speed. `bots` still has three winners of ten, informed at 12 HP, first-timer reaching Umbra and losing at 4 HP, so the upgrades did not flatten the difficulty. Note the scripted bots take whichever upgrade is offered first, which is not good play; a person choosing deliberately should do better.
+
+**Still not implemented from revision 2:** the two previewed entry routes, the guided first-placement tutorial, reflector-as-amplifier, and the core-power dominance question. Unfamiliar-player testing has still not happened and nothing here is a claim about it.
 

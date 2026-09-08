@@ -1282,7 +1282,8 @@ module.exports = function (S) {
     await ctx.tap('#btnHelp');
     let help = await overlay();
     ctx.check(help.indexOf('HOW TO PLAY') >= 0, 'help opens');
-    ['MIRROR', 'SPLITTER', 'REFLECTOR', 'LAMP', 'SHIELDING', 'DIRECTION', 'LOOPS'].forEach(function (word) {
+    ['MIRROR', 'SPLITTER', 'REFLECTOR', 'LAMP', 'ABSORPTION', 'SHIELDS', 'DIRECTION',
+     'PLANNING', 'UPGRADES', 'LOOPS'].forEach(function (word) {
       ctx.check(help.indexOf(word) >= 0, 'help explains ' + word);
     });
     ctx.eq(await st(function () { return R.state.phase; }), 'paused', 'help pauses the game');
@@ -2661,6 +2662,12 @@ module.exports = function (S) {
 
     while (Date.now() - started < 420000) {
       m = await hud();
+      /* An upgrade choice is an overlay too, but it is not a result. */
+      if (await ctx.page.$('#overlayRoot .upcard')) {
+        await ctx.tap('#overlayRoot .upcard');
+        await ctx.page.waitForTimeout(150);
+        continue;
+      }
       if (m.overlay) { result = m.overlay; break; }
       if (m.wave > peakWave) peakWave = m.wave;
 
@@ -2724,6 +2731,12 @@ module.exports = function (S) {
     let lost = null;
     while (Date.now() - lossStart < 240000) {
       m = await hud();
+      const choice = await ctx.page.$('#overlayRoot .upcard');
+      if (choice) {
+        await ctx.tap('#overlayRoot .upcard');
+        await ctx.page.waitForTimeout(150);
+        continue;
+      }
       if (m.overlay) { lost = m.overlay; break; }
       const startable = await ctx.ev(function () {
         return !document.getElementById('btnNext').classList.contains('dim');
@@ -3323,7 +3336,7 @@ module.exports = function (S) {
       window.__REFRACT.freeze(true);
       for (let i = 0; i < R.BALANCE.WAVES.length; i++) {
         window.__REFRACT.playWave(300);
-        if (R.state.phase !== 'building') break;
+        if (R.state.phase === 'lost' || R.state.phase === 'won') break;
       }
       R.ui.frame(R.state, 0.016);
     });
@@ -3367,6 +3380,215 @@ module.exports = function (S) {
     ctx.check(phases.shieldAtSpawn > 0, 'the boss did start the walk shielded');
     ctx.check(phases.walkSeconds >= 40 && phases.walkSeconds <= 75,
       'the boss encounter is a readable length (' + phases.walkSeconds + 's on the road)');
+  };
+
+
+  /*
+   * The run upgrades: that the offer is well formed, that taking one changes
+   * something measurable, and that the capped ones cannot compound.
+   */
+  S.upgrades = async function (ctx) {
+    const st = function (fn, a) { return ctx.ev(fn, a); };
+
+    /* --- the offer --- */
+    const offer = await st(function () {
+      window.__REFRACT.restart(7300);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      /* A network good enough to reach the second choice. */
+      s.gold = 5000;
+      s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+      [['mirror', 7, 4, 1], ['mirror', 0, 4, 1], ['mirror', 0, 6, 0],
+       ['splitter', 7, 8, 1], ['lamp', 0, 2, 1], ['lamp', 0, 10, 1]
+      ].forEach(function (m) { window.__REFRACT.place(m[0], m[1], m[2], m[3]); });
+      for (let i = 0; i < 5; i++) R.pieces.upgradeCore(s);
+      const seen = [];
+      for (let w = 1; w <= R.BALANCE.WAVES.length; w++) {
+        if (s.phase === 'choosing') seen.push({ after: s.wave, offer: s.upgradeOffer.slice() });
+        window.__REFRACT.playWave(300);
+        if (s.phase === 'lost' || s.phase === 'won') break;
+      }
+      if (s.phase === 'choosing') seen.push({ after: s.wave, offer: s.upgradeOffer.slice() });
+      return { seen: seen, taken: s.upgrades.slice(), after: R.BALANCE.UPGRADE_AFTER };
+    });
+    ctx.log('  offers: ' + JSON.stringify(offer));
+    ctx.eq(offer.seen.length, offer.after.length,
+      'one choice is offered after each of the listed encounters');
+    offer.seen.forEach(function (o, i) {
+      ctx.eq(o.after, offer.after[i], 'the choice comes after encounter ' + offer.after[i]);
+      ctx.eq(o.offer.length, 3, 'three upgrades are offered');
+      ctx.eq(new Set(o.offer).size, 3, 'and they are three different ones');
+    });
+    ctx.eq(new Set(offer.taken).size, offer.taken.length, 'an upgrade cannot be taken twice');
+
+    /* --- the run stops while the choice is up --- */
+    const paused = await st(function () {
+      window.__REFRACT.restart(7301);
+      window.__REFRACT.freeze(true);
+      const s = R.state;
+      s.gold = 5000;
+      window.__REFRACT.place('mirror', 7, 4, 1);
+      while (s.phase !== 'choosing' && s.wave < R.BALANCE.WAVES.length) window.__REFRACT.playWave(300);
+      const before = { phase: s.phase, wave: s.wave, hp: s.coreHp };
+      window.__REFRACT.step(30);
+      const after = { phase: s.phase, wave: s.wave, hp: s.coreHp };
+      R.ui.frame(s, 0.016);
+      const cards = document.querySelectorAll('#overlayRoot .upcard').length;
+      return { before: before, after: after, cards: cards, simulating: R.isSimulating(s) };
+    });
+    ctx.log('  while choosing: ' + JSON.stringify(paused));
+    ctx.eq(paused.before.phase, 'choosing', 'the run stops on the choice');
+    ctx.eq(paused.after.wave, paused.before.wave, 'thirty seconds of reading advances nothing');
+    ctx.eq(paused.simulating, false, 'and nothing is simulating behind it');
+    ctx.eq(paused.cards, 3, 'three cards are on screen');
+    await ctx.snap('a-upgrade-choice');
+
+    /*
+     * Each upgrade has to change something a player could notice. The same
+     * board and the same bodies are measured with it and without it.
+     */
+    const probe = function (key) {
+      return st(function (k) {
+        window.__REFRACT.restart(7302);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.gold = 5000;
+        s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+        if (k) s.upgrades.push(k);
+        window.__REFRACT.place('mirror', 7, 4, 1);
+        window.__REFRACT.place('splitter', 7, 8, 1);
+        window.__REFRACT.place('lamp', 0, 2, 1);
+        const foes = [12, 11, 10].map(function (t) {
+          const e = R.enemies.spawn(s, 'mote');
+          e.t = t;
+          e.speed = 0;
+          R.enemies.positionOf(s, e);
+          return e;
+        });
+        window.__REFRACT.step(1);
+        const dealt = foes.reduce(function (a, e) { return a + (e.maxHp - e.hp); }, 0);
+        return {
+          dealt: Math.round(dealt * 100) / 100,
+          core: Math.round(R.beam.coreOutput(s) * 100) / 100,
+          lamp: Math.round(R.beam.lampOutput(s) * 100) / 100,
+          split: R.beam.splitFactor(s),
+          lit: s.beam.litRoadCount
+        };
+      }, key);
+    };
+
+    const base = await probe(null);
+    ctx.log('  baseline   ' + JSON.stringify(base));
+    const results = {};
+    const keys = ['crossfire', 'afterglow', 'piercing', 'focused', 'twin', 'reach'];
+    for (const key of keys) {
+      results[key] = await probe(key);
+      ctx.log('  ' + key.padEnd(10) + ' ' + JSON.stringify(results[key]));
+    }
+
+    ctx.check(results.piercing.dealt > base.dealt,
+      'Piercing Light gets more light through a line of bodies (' + base.dealt + ' to ' + results.piercing.dealt + ')');
+    /*
+     * Afterglow is a tail, so it only shows once a body is out of the light.
+     * The probe above holds its motes inside the beam, where there is nothing
+     * for a tail to add; this one walks one out of the beam and then measures.
+     */
+    const tail = await st(function () {
+      function run(withUpgrade) {
+        window.__REFRACT.restart(7306);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.gold = 5000;
+        if (withUpgrade) s.upgrades.push('afterglow');
+        window.__REFRACT.place('mirror', 7, 4, 1);
+        const e = R.enemies.spawn(s, 'mote');
+        e.t = 11;
+        e.speed = 0;
+        R.enemies.positionOf(s, e);
+        window.__REFRACT.step(0.5);
+        const inBeam = Math.round((e.maxHp - e.hp) * 100) / 100;
+        /* Step it off the lit sweep and let the tail run out. */
+        e.t = 15;
+        R.enemies.positionOf(s, e);
+        window.__REFRACT.step(1.5);
+        return { inBeam: inBeam, total: Math.round((e.maxHp - e.hp) * 100) / 100 };
+      }
+      return { off: run(false), on: run(true) };
+    });
+    ctx.log('  afterglow tail ' + JSON.stringify(tail));
+    ctx.eq(tail.off.total, tail.off.inBeam, 'without it, leaving the beam ends the damage');
+    ctx.check(tail.on.total > tail.on.inBeam,
+      'with it, the burn keeps going after the body leaves the light (' +
+      tail.on.inBeam + ' to ' + tail.on.total + ')');
+    const glow = await st(function () {
+      const u = R.BALANCE.UPGRADES.afterglow;
+      return { seconds: u.seconds, share: u.share };
+    });
+    ctx.near(tail.on.total - tail.on.inBeam, tail.on.inBeam / 0.5 * glow.share * glow.seconds, 0.3,
+      'and the tail is the documented share for the documented time');
+    ctx.check(tail.on.total < tail.on.inBeam * 2,
+      'the tail does not feed itself into an endless burn');
+    ctx.check(results.focused.core > base.core && results.focused.lamp < base.lamp,
+      'Focused Core trades lamp output for core output');
+    ctx.check(results.twin.lamp > base.lamp && results.twin.core < base.core,
+      'Twin Flames trades the other way');
+    ctx.check(results.reach.split > base.split, 'Long Reach widens both splitter branches');
+    ctx.check(results.reach.lit >= base.lit, 'and lights at least as much road');
+    ctx.check(results.focused.lamp < base.lamp,
+      'lamp power is scaled on its own, so a stronger core does not drag it up too');
+
+    /* --- Crossfire needs two directions and pays out once --- */
+    const cross = await st(function () {
+      function run(withUpgrade, twoWays) {
+        window.__REFRACT.restart(7303);
+        window.__REFRACT.freeze(true);
+        const s = R.state;
+        s.gold = 5000;
+        s.unlocked = { mirror: true, splitter: true, reflector: true, lamp: true };
+        if (withUpgrade) s.upgrades.push('crossfire');
+        window.__REFRACT.place('mirror', 7, 4, 1);
+        if (twoWays) window.__REFRACT.place('reflector', 0, 4, 0);
+        const e = R.enemies.spawn(s, 'mote');
+        e.t = 11;
+        e.speed = 0;
+        R.enemies.positionOf(s, e);
+        window.__REFRACT.step(1);
+        return Math.round((e.maxHp - e.hp) * 100) / 100;
+      }
+      return {
+        oneWayOff: run(false, false), oneWayOn: run(true, false),
+        twoWayOff: run(false, true), twoWayOn: run(true, true)
+      };
+    });
+    ctx.log('  crossfire ' + JSON.stringify(cross));
+    ctx.eq(cross.oneWayOn, cross.oneWayOff,
+      'Crossfire does nothing to a body lit from one direction only');
+    ctx.check(cross.twoWayOn > cross.twoWayOff,
+      'and pays out when a second direction reaches it (' + cross.twoWayOff + ' to ' + cross.twoWayOn + ')');
+    const bonus = await st(function () { return R.BALANCE.UPGRADES.crossfire.bonus; });
+    ctx.near(cross.twoWayOn / cross.twoWayOff, 1 + bonus, 0.02,
+      'exactly one bonus is applied, however many beams arrive');
+
+    /* --- the two source upgrades exclude each other --- */
+    const exclusive = await st(function () {
+      window.__REFRACT.restart(7304);
+      const s = R.state;
+      s.upgrades.push('focused');
+      return { eligible: R.eligibleUpgrades(s) };
+    });
+    ctx.log('  after Focused Core: ' + JSON.stringify(exclusive));
+    ctx.check(exclusive.eligible.indexOf('twin') < 0,
+      'Twin Flames is not offered once Focused Core is taken');
+    ctx.check(exclusive.eligible.indexOf('focused') < 0, 'nor is Focused Core again');
+
+    /* --- a fresh run starts with none of it --- */
+    const reset = await st(function () {
+      window.__REFRACT.restart(7305);
+      const s = R.state;
+      return { upgrades: s.upgrades.length, offer: s.upgradeOffer };
+    });
+    ctx.eq(reset.upgrades, 0, 'a new run carries no upgrades over');
+    ctx.eq(reset.offer, null, 'and no stale offer');
   };
 
 };

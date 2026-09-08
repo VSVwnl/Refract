@@ -83,6 +83,9 @@
   var kind = null;
   var pieces = null;
   var nowTime = 0;
+  /* Per-solve values from the run upgrades, read once instead of per cell. */
+  var splitFactor = 0;
+  var absorbCut = 1;
 
   var bendPending = false;
   var currentSourcePower = 1;
@@ -176,6 +179,9 @@
           if (stepDt > 0) {
             e.damage += landed * stepDt;
             e.hitAt = nowTime;
+            /* Which directions reached this body, for Crossfire. */
+            e.dirMask |= (1 << dir);
+            if (landed > e.peakHit) e.peakHit = landed;
             if (exposure < 1) e.shieldedAt = nowTime;
             else if (e.shield) e.exposedAt = nowTime;
           }
@@ -183,7 +189,7 @@
            * Absorption is a property of the body, not of the shield: what
            * continues past this enemy is reduced the same way from any angle.
            */
-          power *= (1 - e.absorb);
+          power *= (1 - absorbCut * e.absorb);
           if (power < B.MIN_POWER) { power = 0; break; }
         }
         if (power !== before) {
@@ -213,8 +219,8 @@
         if (piece.type === 'mirror') {
           trace(c, r, R.grid.reflect(dir, piece.orient), power, depth + 1, sourceId, true, travelled);
         } else if (piece.type === 'splitter') {
-          trace(c, r, dir, power * B.SPLIT_FACTOR, depth + 1, sourceId, true, travelled);
-          trace(c, r, R.grid.reflect(dir, piece.orient), power * B.SPLIT_FACTOR, depth + 1, sourceId, true, travelled);
+          trace(c, r, dir, power * splitFactor, depth + 1, sourceId, true, travelled);
+          trace(c, r, R.grid.reflect(dir, piece.orient), power * splitFactor, depth + 1, sourceId, true, travelled);
         } else if (piece.type === 'reflector') {
           trace(c, r, R.grid.opposite(dir), power * B.REFLECT_FACTOR, depth + 1, sourceId, true, travelled);
         }
@@ -237,6 +243,32 @@
     return arr[Math.min(Math.max(level, 1), arr.length) - 1];
   };
 
+  /*
+   * Source strengths after run upgrades. Lamp power is derived from the core
+   * level but scaled on its own, so an upgrade that trades core strength for
+   * lamp strength is not quietly cancelled by the derivation.
+   */
+  R.beam.coreOutput = function (state) {
+    var base = R.beam.corePower(state.coreLevel);
+    return base * R.upgradeValue(state, 'focused', 'core', 1) *
+      R.upgradeValue(state, 'twin', 'core', 1);
+  };
+
+  R.beam.lampOutput = function (state) {
+    var base = R.beam.corePower(state.coreLevel) * B.LAMP_FACTOR;
+    return base * R.upgradeValue(state, 'focused', 'lamp', 1) *
+      R.upgradeValue(state, 'twin', 'lamp', 1);
+  };
+
+  R.beam.splitFactor = function (state) {
+    return R.upgradeValue(state, 'reach', 'split', B.SPLIT_FACTOR);
+  };
+
+  /* How much of the beam a body drinks, after Piercing Light. */
+  R.beam.absorbOf = function (state, e) {
+    return e.absorb * (1 - R.upgradeValue(state, 'piercing', 'absorbCut', 0));
+  };
+
   R.beam.lampPower = function (level) {
     return R.beam.corePower(level) * B.LAMP_FACTOR;
   };
@@ -252,6 +284,8 @@
     kind = state.grid.kind;
     pieces = state.pieces;
     nowTime = state.time;
+    splitFactor = R.beam.splitFactor(state);
+    absorbCut = 1 - R.upgradeValue(state, 'piercing', 'absorbCut', 0);
 
     out.segCount = 0;
     out.totalPower = 0;
@@ -260,14 +294,14 @@
     out.overflow = false;
     out.lit.fill(0);
 
-    var corePower = R.beam.corePower(state.coreLevel);
+    var corePower = R.beam.coreOutput(state);
     var sourceId = 1;
 
     visitGen++;
     currentSourcePower = corePower;
     trace(R.MAP.core[0], R.MAP.core[1], R.N, corePower, 0, sourceId, false, 0);
 
-    var lampPower = R.beam.lampPower(state.coreLevel);
+    var lampPower = R.beam.lampOutput(state);
     var it = pieces.values();
     var entry = it.next();
     while (!entry.done) {

@@ -101,6 +101,52 @@
       [ ['swarmling', 12, 0.22], ['bulwark', 2, 1.4], ['runner', 6, 0.45], ['mote', 6, 0.6] ],
       [ ['umbra', 1, 0], ['runner', 5, 0.6], ['bulwark', 1, 0], ['mote', 5, 0.7] ]
     ],
+    /*
+     * After the encounters listed in UPGRADE_AFTER the run pauses and offers a
+     * choice of three. Each one is meant to change how the network is built,
+     * not simply to add a percentage, and each is capped so it cannot compound
+     * with itself. Focused Core and Twin Flames pull the same lever in
+     * opposite directions and are mutually exclusive.
+     */
+    UPGRADE_AFTER: [2, 5],
+    UPGRADE_OFFER: 3,
+    UPGRADES: {
+      crossfire: {
+        name: 'CROSSFIRE',
+        blurb: 'An enemy lit from two different directions at once takes 25% more. Counted once, however many beams arrive.',
+        bonus: 0.25
+      },
+      afterglow: {
+        name: 'AFTERGLOW',
+        blurb: 'Light leaves a burn behind. A body that has been hit keeps taking a third of that power for 0.75 s after it leaves the beam.',
+        seconds: 0.75,
+        share: 0.34
+      },
+      piercing: {
+        name: 'PIERCING LIGHT',
+        blurb: 'Bodies drink a quarter less of the beam, so more of it reaches whatever is standing behind them. Shields are unaffected.',
+        absorbCut: 0.25
+      },
+      focused: {
+        name: 'FOCUSED CORE',
+        blurb: 'The core beam is a third stronger and every lamp is a third weaker. Commit to one efficient network.',
+        core: 1.34,
+        lamp: 0.66,
+        excludes: 'twin'
+      },
+      twin: {
+        name: 'TWIN FLAMES',
+        blurb: 'Every lamp is two thirds stronger and the core beam is a fifth weaker. Commit to several independent sources.',
+        core: 0.8,
+        lamp: 1.65,
+        excludes: 'focused'
+      },
+      reach: {
+        name: 'LONG REACH',
+        blurb: 'A splitter sends 60% down each branch instead of 50%, so spreading the light costs less.',
+        split: 0.6
+      }
+    },
     ENDLESS: { BASE_COUNT: 8, SPEED_PER_WAVE: 0.02, SPEED_CAP: 1.5, KING_EVERY: 5 }
   };
 

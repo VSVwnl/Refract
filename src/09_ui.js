@@ -180,6 +180,16 @@
      * damage figure behind that distinction is development telemetry, not
      * something to put in front of the player.
      */
+    var taken = s.upgrades.join(',');
+    if (cache.upgrades !== taken) {
+      cache.upgrades = taken;
+      el.upgradeBar.innerHTML = '';
+      for (var ui2 = 0; ui2 < s.upgrades.length; ui2++) {
+        el.upgradeBar.appendChild(node('span', 'uptag', B.UPGRADES[s.upgrades[ui2]].name));
+      }
+      el.upgradeBar.hidden = s.upgrades.length === 0;
+    }
+
     var cov = s.beam.litRoadCount;
     if (cov > lastCov) ui.pulseLight();
     lastCov = cov;
@@ -303,7 +313,7 @@
   function openOverlay(kind, build) {
     overlayKind = kind;
     el.overlayRoot.innerHTML = '';
-    var wrap = node('div', 'overlay');
+    var wrap = node('div', 'overlay ov-' + kind);
     build(wrap);
     el.overlayRoot.appendChild(wrap);
     el.overlayRoot.classList.add('on');
@@ -411,6 +421,40 @@
     }
   }
 
+  /*
+   * The choice of three offered after certain encounters. The run is stopped
+   * while it is up, so the descriptions can be read without a clock running,
+   * and each card says plainly what it changes.
+   */
+  function buildUpgradeChoice(wrap) {
+    var s = R.state;
+    var h = node('h2', null, 'CHOOSE AN UPGRADE');
+    h.style.color = '#ffc247';
+    wrap.appendChild(h);
+    wrap.appendChild(node('p', 'upnote', 'It lasts for the rest of this run.'));
+
+    var cards = node('div', 'upcards');
+    var offer = s.upgradeOffer || [];
+    for (var i = 0; i < offer.length; i++) {
+      cards.appendChild(upgradeCard(offer[i]));
+    }
+    wrap.appendChild(cards);
+  }
+
+  function upgradeCard(key) {
+    var def = B.UPGRADES[key];
+    var card = node('button', 'upcard');
+    card.type = 'button';
+    card.setAttribute('data-upgrade', key);
+    card.appendChild(node('span', 'upname', def.name));
+    card.appendChild(node('span', 'upblurb', def.blurb));
+    card.addEventListener('click', function () {
+      R.audio.ensure();
+      R.chooseUpgrade(R.state, key);
+    });
+    return card;
+  }
+
   /* Rebuild only when the phase changes, so overlays do not flicker. */
   ui.syncOverlay = function (s) {
     var want = null;
@@ -419,6 +463,7 @@
     else if (s.phase === 'paused') want = 'pause';
     else if (s.phase === 'lost') want = 'lost';
     else if (s.phase === 'won') want = 'won';
+    else if (s.phase === 'choosing') want = 'choosing';
 
     if (want === overlayKind) return;
     if (!want) {
@@ -430,6 +475,7 @@
     else if (want === 'pause') openOverlay('pause', buildPause);
     else if (want === 'lost') openOverlay('lost', buildDefeat);
     else if (want === 'won') openOverlay('won', buildVictory);
+    else if (want === 'choosing') openOverlay('choosing', buildUpgradeChoice);
   };
 
   ui.overlayKind = function () {
@@ -736,8 +782,11 @@
       ['LAMP', 'A second source at half the core power, aimed wherever you turn it.'],
       ['CORE', 'Upgrading the core brightens the beam and every lamp with it.'],
       ['BURNING', 'Anything standing in the light takes damage every moment it stays there. Long lit segments burn for longer than a single crossing.'],
-      ['SHIELDING', 'Every shadow the light passes through takes a bite out of it, so the ones behind take less. Brutes take the biggest bite.'],
-      ['DIRECTION', 'Light meets the road from the end it arrives at. Aim it against the walk to hit the leader, or with the walk to hit the back of the pack first.'],
+      ['ABSORPTION', 'Every body the light passes through takes a bite out of it, so the ones behind take less. Bulwarks take the biggest bite.'],
+      ['SHIELDS', 'A Bulwark carries its shield on the face it walks towards. Light meeting that face is mostly turned away; light reaching its flank or its back lands in full.'],
+      ['DIRECTION', 'Light meets the road from the end it arrives at. Aim it against the walk to meet the leader head on, or with the walk to reach the backs of the pack.'],
+      ['PLANNING', 'Nothing starts until you tap START WAVE. While you are planning, moving, turning and selling pieces is free.'],
+      ['UPGRADES', 'After some encounters you choose one of three upgrades. They last the rest of the run and are meant to change how you build, not just how hard you hit.'],
       ['LOOPS', 'Light never retraces the same tile in the same direction, so a closed ring of mirrors goes dark.']
     ];
     lines.forEach(function (l) {
@@ -859,6 +908,7 @@
     el.waveSub = key(el.statWave.querySelector('.sub'), 'waveSub');
     el.covVal = key(el.statLight.querySelector('.val'), 'covVal');
     el.covSub = key(el.statLight.querySelector('.sub'), 'covSub');
+    el.upgradeBar = byId('upgradeBar');
     el.strip = byId('strip');
     el.stripText = key(byId('stripText'), 'strip');
     el.overlayRoot = byId('overlayRoot');

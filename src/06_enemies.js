@@ -20,7 +20,8 @@
       id: 0, type: '', hp: 0, maxHp: 0, t: 0, speed: 0, absorb: 0, shield: 0,
       gold: 0, leak: 0, radius: 0, boss: false, face: 0,
       shield0: 0, exposeAt: 0, phase: 1,
-      damage: 0, hitAt: -1, shieldedAt: -1, exposedAt: -1,
+      damage: 0, hitAt: -1, shieldedAt: -1, exposedAt: -1, crossfireAt: -1,
+      dirMask: 0, peakHit: 0, glowUntil: -1, glowPower: 0,
       x: 0, z: 0, cell: -1, spawnAt: 0
     };
   }
@@ -145,6 +146,11 @@
     e.hitAt = -1;
     e.shieldedAt = -1;
     e.exposedAt = -1;
+    e.dirMask = 0;
+    e.peakHit = 0;
+    e.glowUntil = -1;
+    e.glowPower = 0;
+    e.crossfireAt = -1;
     e.face = R.S;
     e.cell = -1;
     e.spawnAt = s.time;
@@ -260,12 +266,51 @@
     }
   };
 
-  /* Damage collected by the solver becomes deaths; survivors may then leak. */
-  en.resolveStep = function (s) {
+  /* How many different directions delivered light to a body this step. */
+  function directionsHit(mask) {
+    var n = 0;
+    for (var d = 0; d < 4; d++) if (mask & (1 << d)) n++;
+    return n;
+  }
+
+  /*
+   * Damage collected by the solver becomes deaths; survivors may then leak.
+   * The run upgrades that change damage rather than light are applied here, on
+   * the total for the step, so each is counted once however many beams landed.
+   */
+  en.resolveStep = function (s, dt) {
     var list = s.enemies;
     var end = s.path.length - 1;
+    var step = dt || 0;
+    var crossfire = R.upgradeValue(s, 'crossfire', 'bonus', 0);
+    var glowSeconds = R.upgradeValue(s, 'afterglow', 'seconds', 0);
+    var glowShare = R.upgradeValue(s, 'afterglow', 'share', 0);
+
     for (var i = list.length - 1; i >= 0; i--) {
       var e = list[i];
+
+      if (crossfire > 0 && e.damage > 0 && directionsHit(e.dirMask) >= 2) {
+        e.damage *= (1 + crossfire);
+        e.crossfireAt = s.time;
+      }
+
+      /*
+       * Afterglow is a single refreshable burn, never a stack: a new hit
+       * replaces the tail rather than adding another one, and the tail itself
+       * never counts as a hit, so it cannot feed itself.
+       */
+      if (glowSeconds > 0) {
+        if (e.peakHit > 0) {
+          e.glowUntil = s.time + glowSeconds;
+          e.glowPower = e.peakHit * glowShare;
+        } else if (e.glowUntil > s.time && e.glowPower > 0) {
+          e.damage += e.glowPower * step;
+        }
+      }
+
+      e.dirMask = 0;
+      e.peakHit = 0;
+
       if (e.damage > 0) {
         e.hp -= e.damage;
         e.damage = 0;

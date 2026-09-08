@@ -127,6 +127,38 @@
     R.emit(s, won ? 'win' : 'lose', { score: s.score, wave: s.wave });
   };
 
+  /* ---------- run upgrades ---------- */
+
+  /*
+   * Upgrades are the part of progression that changes how the network is
+   * built, as opposed to core levels, which only make the same network
+   * stronger. They are offered at fixed points so a run is reproducible, and
+   * an offer never contains an upgrade already taken or one excluded by it.
+   */
+  /* A seeded pick, so the same run seed always offers the same choices. */
+  R.buildUpgradeOffer = function (s) {
+    var pool = R.eligibleUpgrades(s);
+    var take = Math.min(R.BALANCE.UPGRADE_OFFER, pool.length);
+    var offer = [];
+    for (var i = 0; i < take; i++) {
+      var pick = Math.floor(s.rng() * pool.length);
+      if (pick >= pool.length) pick = pool.length - 1;
+      offer.push(pool.splice(pick, 1)[0]);
+    }
+    return offer.length ? offer : null;
+  };
+
+  R.chooseUpgrade = function (s, key) {
+    if (s.phase !== 'choosing') return false;
+    if (!s.upgradeOffer || s.upgradeOffer.indexOf(key) < 0) return false;
+    s.upgrades.push(key);
+    s.upgradeOffer = null;
+    s.phase = 'building';
+    R.beam.recompute(s);
+    R.emit(s, 'upgraded', { upgrade: key });
+    return true;
+  };
+
   /* ---------- wave flow ---------- */
 
   R.applyUnlocks = function (s, upcomingWave) {
@@ -171,6 +203,19 @@
     }
     s.phase = 'building';
     R.applyUnlocks(s, s.wave + 1);
+
+    /*
+     * The run pauses on the choice rather than showing it over live combat,
+     * so reading three descriptions is never a race.
+     */
+    if (!s.endless && R.BALANCE.UPGRADE_AFTER.indexOf(s.wave) >= 0) {
+      var offer = R.buildUpgradeOffer(s);
+      if (offer) {
+        s.upgradeOffer = offer;
+        s.phase = 'choosing';
+        R.emit(s, 'upgradeoffer', { offer: offer });
+      }
+    }
   };
 
   /* ---------- simulation ---------- */
@@ -191,7 +236,7 @@
 
     R.enemies.moveStep(s, dt);
     R.beam.solve(s, R.enemies.occupancy(s), dt, s.beam);
-    R.enemies.resolveStep(s);
+    R.enemies.resolveStep(s, dt);
 
     if (s.coreHp <= 0 && s.phase !== 'lost') {
       s.coreHp = 0;
@@ -259,6 +304,10 @@
 
   R.isSimulating = function (s) {
     return s.phase === 'building' || s.phase === 'wave';
+  };
+
+  R.isChoosing = function (s) {
+    return !!s && s.phase === 'choosing';
   };
 
   /* ---------- pause on tab hide ---------- */

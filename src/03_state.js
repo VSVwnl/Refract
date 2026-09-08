@@ -68,6 +68,9 @@
       coreLevel: 1,
       /* Enemy type of a boss that reached the core; ends the run when set. */
       bossBreached: null,
+      /* Run upgrades taken, in order, and the offer currently on screen. */
+      upgrades: [],
+      upgradeOffer: null,
       score: 0,
       wavesCleared: 0,
       grid: { cols: B.COLS, rows: B.ROWS, kind: board.kind },
@@ -103,6 +106,41 @@
     };
     s.rng = R.util.makeRng(s.rngSeed);
     return s;
+  };
+
+  /* ---------- run upgrades ---------- */
+
+  /*
+   * Upgrades taken during a run. The lookups live here rather than with the
+   * run lifecycle because the solver and the enemy rules read them on every
+   * step, including in the headless tests.
+   */
+  R.hasUpgrade = function (s, key) {
+    return !!s && s.upgrades.indexOf(key) >= 0;
+  };
+
+  /*
+   * The value an upgrade contributes to one tuning field, or `dflt` when it
+   * has not been taken. Callers multiply or add as suits the field, so an
+   * upgrade that is absent is always the identity.
+   */
+  R.upgradeValue = function (s, key, field, dflt) {
+    if (!R.hasUpgrade(s, key)) return dflt;
+    var def = B.UPGRADES[key];
+    return def && def[field] !== undefined ? def[field] : dflt;
+  };
+
+  /* Everything not already taken and not excluded by something taken. */
+  R.eligibleUpgrades = function (s) {
+    var table = B.UPGRADES;
+    var out = [];
+    for (var key in table) {
+      if (R.hasUpgrade(s, key)) continue;
+      var excl = table[key].excludes;
+      if (excl && R.hasUpgrade(s, excl)) continue;
+      out.push(key);
+    }
+    return out;
   };
 
   /* Score is recomputed whenever it is displayed so it is always consistent. */

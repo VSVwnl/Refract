@@ -64,15 +64,31 @@
        * encounter the same way a tap does.
        */
       startWave: function () {
-        R.startWave(R.state);
-        return R.state.phase;
+        var s = R.state;
+        if (s.phase === 'choosing') api().chooseUpgrade();
+        R.startWave(s);
+        return s.phase;
       },
 
-      /* Start the next encounter and run it to its end. */
+      /* Take one of the upgrades currently on offer. */
+      chooseUpgrade: function (key) {
+        var s = R.state;
+        if (!s.upgradeOffer) return null;
+        R.chooseUpgrade(s, key || s.upgradeOffer[0]);
+        return s.upgrades.slice();
+      },
+
+      /*
+       * Start the next encounter and run it to its end. A scripted run takes
+       * the first upgrade on offer so it does not stall on the choice screen;
+       * pass a key to `chooseUpgrade` first to pick a different one.
+       */
       playWave: function (maxSeconds) {
         var s = R.state;
+        if (s.phase === 'choosing') api().chooseUpgrade();
         R.startWave(s);
-        return api().stepUntil('s.phase !== "wave"', maxSeconds || 260);
+        var t = api().stepUntil('s.phase !== "wave"', maxSeconds || 260);
+        return t;
       },
 
       /* Speed 0 stops the frame loop from stepping, so step() owns the clock. */
@@ -174,6 +190,8 @@
           wavesCleared: s.wavesCleared,
           endless: s.endless,
           bossBreached: s.bossBreached,
+          upgrades: s.upgrades.slice(),
+          upgradeOffer: s.upgradeOffer ? s.upgradeOffer.slice() : null,
           time: Math.round(s.time * 100) / 100,
           gold: s.gold,
           goldEarned: s.goldEarned,

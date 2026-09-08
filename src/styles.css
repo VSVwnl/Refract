@@ -552,6 +552,34 @@ body.wide #sideNote { display: block; }
   text-align: center;
 }
 
+/*
+ * Centring and scrolling do not mix: a flex column centred on an overflowing
+ * axis puts its first child out of reach above the scroll origin. The long
+ * overlays therefore stack from the top, and the part that can grow scrolls
+ * inside itself so the button underneath it stays on screen and tappable.
+ */
+.overlay.ov-help,
+.overlay.ov-choosing {
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.overlay.ov-help .rows,
+.overlay.ov-choosing .upcards {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 330px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.overlay.ov-choosing .upcards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .overlay h1 {
   margin: 0;
   font-size: 44px;
@@ -615,6 +643,67 @@ body.wide #sideNote { display: block; }
 
 .statline { font-size: 14px; color: var(--ink); letter-spacing: 0.04em; }
 .statline b { color: var(--gold); }
+
+/* The line under the upgrade heading. */
+.upnote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+/* One upgrade on the choice screen. */
+.upcard {
+  display: block;
+  width: 100%;
+  max-width: 330px;
+  min-height: 44px;
+  text-align: left;
+  padding: 11px 13px;
+  border: 1px solid #3a4d86;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #1b2647 0%, #141d38 100%);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.upcard:active { border-color: var(--gold); background: #24325c; }
+
+.upcard .upname {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+}
+
+.upcard .upblurb {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #cfd9f5;
+}
+
+/* The upgrades this run has taken, under the incoming strip. */
+#upgradeBar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+  padding: 0 var(--pad) 3px;
+}
+
+#upgradeBar .uptag {
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  color: var(--gold);
+  border: 1px solid #4a3a1c;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: rgba(255, 194, 71, 0.08);
+}
 
 /* The one-line reason a run ended, above the advice. */
 .reason {
